@@ -2,6 +2,8 @@
 #include "flash.h" 
 #include "stdio.h"
 #include "stm32f4xx.h"
+#include "bsp_flash.h"
+
 // 字体声明
 extern lv_font_t font_chinese_9;
 
@@ -314,7 +316,9 @@ void page_log_refresh(void)
     // 自诊断：一条都读不到时显示写指针位置（0=本次开机还没写过日志）
     if(cnt == 0)
     {
-        snprintf(buf,sizeof(buf),"(no entries) wptr=%u sz=%u", (unsigned)log_write_offset, (unsigned)LOG_OBJ_SIZE);
+        snprintf(buf,sizeof(buf),"(no entries) wptr=%u sz=%u id=%06lX",
+                 (unsigned)log_write_offset, (unsigned)LOG_OBJ_SIZE,
+                 (unsigned long)SPI_FLASH_ReadID());
         lv_list_add_text(list_log,buf);
     }
 }
