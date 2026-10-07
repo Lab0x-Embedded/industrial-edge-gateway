@@ -55,6 +55,9 @@
 /* 透传模式下从 ESP8266 接收原始 TCP 数据 */
 int pal_tcp_recv_raw(int sock, uint8_t *buf, int len, int timeout_ms);
 
+/* 调试串口输出（UART5 PC12/PD2 115200），任意任务可用 */
+void pal_dbg(const char *s);
+
 void MQTT_Init(void);
 void RE_MQTT_Init(void);
 void MQTT_SendPing(void);

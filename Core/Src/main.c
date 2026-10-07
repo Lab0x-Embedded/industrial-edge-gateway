@@ -113,6 +113,7 @@ int main(void)
   MX_TIM3_Init();
   MX_IWDG_Init();
   MX_RTC_Init();
+  MX_UART5_Init();
   /* USER CODE BEGIN 2 */
 
   SPI_FLASH_Init();                          /* W25Q128: SPI1 + CS(PG8) */

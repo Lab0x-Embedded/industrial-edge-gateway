@@ -12,6 +12,11 @@
 
 extern uint8_t a[256];
 
+/* 调试串口（UART5 PC12/PD2 115200）直出，任意任务可用 */
+void pal_dbg(const char *s) {
+  HAL_UART_Transmit(&huart5, (uint8_t *)s, strlen(s), 100);
+}
+
 volatile uint8_t wifi_connected =
     0; /* ESP8266 已连上 AP（CWJAP 成功），UI 状态栏据此显示 */
 
@@ -192,6 +197,7 @@ void MQTT_Init(void) {
   const CloudProfile *p = &profiles[CLOUD_TARGET];
   char cmd[96];
 
+  pal_dbg("\r\n==== MQTT init ====\r\n");
   HAL_UART_Transmit(&huart4, (uint8_t *)"+++\r\n", 3, 100);
   vTaskDelay(1000);
 
@@ -201,15 +207,22 @@ void MQTT_Init(void) {
 
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
   if (ESP_SendCmd("AT+CWJAP=\"" WIFI_SSID "\",\"" WIFI_PASS "\"\r\n",
-                  "WIFI GOT IP", 5000) == ESP_OK)
+                  "WIFI GOT IP", 5000) == ESP_OK) {
     wifi_connected = 1;
-  else
+    pal_dbg("[NET] wifi OK\r\n");
+  } else {
     wifi_connected = 0;
+    pal_dbg("[NET] wifi join FAILED\r\n");
+    Log_Write(LOG_WARN, "wifi join failed");
+  }
   vTaskDelay(500);
 
   snprintf(cmd, sizeof cmd, "AT+CIPSTART=\"TCP\",\"%s\",%u\r\n", p->host,
            (unsigned)p->port);
-  ESP_SendCmd(cmd, "CONNECT", 2000);
+  if (ESP_SendCmd(cmd, "CONNECT", 2000) == ESP_OK)
+    pal_dbg("[NET] tcp OK\r\n");
+  else
+    pal_dbg("[NET] tcp connect FAILED\r\n");
   vTaskDelay(500);
 
   // 进入透传模式
@@ -223,10 +236,12 @@ void MQTT_Init(void) {
   if (mqtt_wait_connack()) {
     mqtt_send_subscribe();
     g_mqtt_connected = 1;
+    pal_dbg("[MQTT] CONNACK ok, subscribed\r\n");
     Log_Write(LOG_INFO, "CONNECT FINISH");
   } else {
     g_mqtt_connected = 0;
-    Log_Write(LOG_WARN, "connect failed");
+    pal_dbg("[MQTT] CONNACK failed\r\n");
+    Log_Write(LOG_WARN, "connack failed");
   }
 }
 
@@ -236,6 +251,7 @@ void RE_MQTT_Init(void) {
   const CloudProfile *p = &profiles[CLOUD_TARGET];
   char cmd[96];
 
+  pal_dbg("\r\n==== MQTT reconnect ====\r\n");
   HAL_UART_Transmit(&huart4, (uint8_t *)"+++\r\n", 3, 100);
   vTaskDelay(1000);
 
@@ -246,13 +262,20 @@ void RE_MQTT_Init(void) {
 
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
   if (ESP_SendCmd("AT+CWJAP=\"" WIFI_SSID "\",\"" WIFI_PASS "\"\r\n",
-                  "WIFI GOT IP", 5000) == ESP_OK)
+                  "WIFI GOT IP", 5000) == ESP_OK) {
     wifi_connected = 1;
-  else
+    pal_dbg("[NET] wifi OK\r\n");
+  } else {
     wifi_connected = 0;
+    pal_dbg("[NET] reconnect: wifi FAILED\r\n");
+    Log_Write(LOG_WARN, "reconnect: wifi failed");
+  }
   snprintf(cmd, sizeof cmd, "AT+CIPSTART=\"TCP\",\"%s\",%u\r\n", p->host,
            (unsigned)p->port);
-  ESP_SendCmd(cmd, "CONNECT", 5000);
+  if (ESP_SendCmd(cmd, "CONNECT", 5000) != ESP_OK) {
+    pal_dbg("[NET] reconnect: tcp FAILED\r\n");
+    Log_Write(LOG_WARN, "reconnect: tcp failed");
+  }
   ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000);
   ESP_SendCmd("AT+CIPSEND\r\n", ">", 5000);
   vTaskDelay(500);
@@ -262,10 +285,12 @@ void RE_MQTT_Init(void) {
   if (mqtt_wait_connack()) {
     mqtt_send_subscribe();
     g_mqtt_connected = 1;
+    pal_dbg("[MQTT] reconnect CONNACK ok\r\n");
     Log_Write(LOG_INFO, "reconnect success");
   } else {
     g_mqtt_connected = 0;
-    Log_Write(LOG_WARN, "reconnect failed");
+    pal_dbg("[MQTT] reconnect CONNACK failed\r\n");
+    Log_Write(LOG_WARN, "reconnect: connack failed");
   }
 }
 
@@ -325,8 +350,12 @@ static void mqtt_drain_downlink(void) {
   pl[plen] = '\0';
 
   /* 是平台回执（带 code）才写日志，避免刷屏 */
-  if (strstr(pl, "\"code\"") != NULL)
+  if (strstr(pl, "\"code\"") != NULL) {
+    pal_dbg("[MQTT] reply: ");
+    pal_dbg(pl);
+    pal_dbg("\r\n");
     Log_Write(strstr(pl, "\"code\":0") != NULL ? LOG_INFO : LOG_WARN, pl);
+  }
 }
 
 /* 统一发布入口：PUBLISH 到 profile 的 topic_pub；
@@ -362,11 +391,19 @@ int pal_mqtt_publish(const char *payload) {
   w += pl;
 
   HAL_UART_Transmit(&huart4, pkt, (uint16_t)(w - pkt), 5000);
+  pal_dbg("[MQTT] pub ");
+  pal_dbg(p->topic_pub);
+  pal_dbg(" ");
+  pal_dbg(payload);
+  pal_dbg("\r\n");
 
   if (p->qos1) {
     uint8_t ack[4];
-    if (pal_tcp_recv_raw(0, ack, 4, 2000) != 4 || ack[0] != 0x40)
+    if (pal_tcp_recv_raw(0, ack, 4, 2000) != 4 || ack[0] != 0x40) {
+      pal_dbg("[MQTT] no PUBACK\r\n");
       return -1; /* 未收到 PUBACK */
+    }
+    pal_dbg("[MQTT] PUBACK ok\r\n");
     mqtt_drain_downlink(); /* 平台回执（code）进日志页，同时保持字节流对齐 */
   }
   return 0;

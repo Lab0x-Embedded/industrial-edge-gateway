@@ -108,6 +108,11 @@ void Log_Write(Log_Level level, const char *str)
         str_len = LOG_CONTENT_LEN - 1U;
     memcpy(log_buf.content, str, str_len);				//拷贝函数的最后一个参数表示 要拷贝的字节数
 
+    /* 同步镜像到调试串口（UART5），与日志页内容一致 */
+    pal_dbg("[LOG] ");
+    pal_dbg(str);
+    pal_dbg("\r\n");
+
     // 2. 日志区循环判断：写满则回到日志区头部
     if((log_write_offset + LOG_OBJ_SIZE) > LOG_PART_SIZE)
     {
