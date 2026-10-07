@@ -20,7 +20,7 @@
 #define CLOUD_E2      0
 #define CLOUD_ONENET  1
 #ifndef CLOUD_TARGET
-#define CLOUD_TARGET  CLOUD_E2
+#define CLOUD_TARGET  CLOUD_ONENET
 #endif
 
 /* E2 平台（CLOUD_TARGET=CLOUD_E2 时生效；设备需先在 E2 注册，凭证必须匹配） */
@@ -43,13 +43,13 @@
 #define ONENET_HOST       "mqtts.heclouds.com"
 #endif
 #ifndef ONENET_PRODUCT_ID
-#define ONENET_PRODUCT_ID "CHANGE_ME"
+#define ONENET_PRODUCT_ID "WW0f6843I6" // Username
 #endif
 #ifndef ONENET_DEVICE_ID
-#define ONENET_DEVICE_ID  "CHANGE_ME"
+#define ONENET_DEVICE_ID  "humi_temp" // ClientID
 #endif
 #ifndef ONENET_TOKEN
-#define ONENET_TOKEN      "CHANGE_ME"
+#define ONENET_TOKEN      "version=2018-10-31&res=products%2FWW0f6843I6%2Fdevices%2Fhumi_temp&et=1822724100&method=sha1&sign=PtFUppXWHY6iMg%2BEMqieAJyGZLo%3D"
 #endif
 
 /* 透传模式下从 ESP8266 接收原始 TCP 数据 */

@@ -218,6 +218,8 @@ void UI(void)
     main_scr = page_main_create();		//屏幕界面
     lv_scr_load(main_scr);				//加载界面
 
+    Log_Write(LOG_INFO, "SYSTEM BOOT");  /* 开机标记：保证日志页至少有一条 */
+
     uint32_t start_tick = xTaskGetTickCount();
     
     uint8_t  last_status = 0xFF;      // 记录上一次的 MQTT 状态

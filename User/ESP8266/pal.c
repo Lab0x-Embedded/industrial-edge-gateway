@@ -223,6 +223,7 @@ void MQTT_Init(void) {
     Log_Write(LOG_INFO, "CONNECT FINISH");
   } else {
     g_mqtt_connected = 0;
+    Log_Write(LOG_WARN, "connect failed");
   }
 }
 

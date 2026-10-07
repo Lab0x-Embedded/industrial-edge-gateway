@@ -113,6 +113,18 @@ void Log_Write(Log_Level level, const char *str)
     {
         log_write_offset = 0U;
     }
+    // 2.1 NOR 只能 1→0：先擦后写。条目不允许跨扇区——放不下就跳到下一扇区头
+    //     （每次开机会写指针归零重写 0 地址，不擦除会与上次数据位与污染）
+    if(((log_write_offset & 0xFFFU) + LOG_OBJ_SIZE) > 0x1000U)
+    {
+        log_write_offset += 0x1000U - (log_write_offset & 0xFFFU);
+        if((log_write_offset + LOG_OBJ_SIZE) > LOG_PART_SIZE)
+            log_write_offset = 0U;
+    }
+    if((log_write_offset & 0xFFFU) == 0U)
+    {
+        SPI_FLASH_SectorErase(LOG_PART_ADDR + log_write_offset);   /* 进入新扇区先擦除 */
+    }
     // 3. 写入日志分区    基地址     偏移地址
     Flash_Part_Write(LOG_PART_ADDR, log_write_offset, (uint8_t *)&log_buf, LOG_OBJ_SIZE);
     // 4. 偏移自增
