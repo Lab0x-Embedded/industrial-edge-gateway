@@ -70,7 +70,7 @@ int  FlashCache_Write(const char *json, uint16_t len);
 int  FlashCache_Read(char *json, uint16_t *len);
 int  FlashCache_HasData(void);
 void FlashCache_Clear(void);
-void MQTT_PublishJson(const char *json);
+int  MQTT_PublishJson(const char *json);
 void MQTT_SendTempHumi_WithCache(float temp, float humi);
 
 void FlashCache_MarkSent(void);

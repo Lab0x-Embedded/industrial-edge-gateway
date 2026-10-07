@@ -108,7 +108,7 @@ xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
 									{
 											HAL_GPIO_WritePin(GPIOE,GPIO_PIN_3,GPIO_PIN_SET);
 											HAL_GPIO_WritePin(GPIOG,GPIO_PIN_9,GPIO_PIN_RESET);
-											MQTT_PublishJson(cached);
+											if (MQTT_PublishJson(cached) != 0) break;   /* 未收到 PUBACK 不标记已发，下轮重试同一条 */
 											FlashCache_MarkSent();				//只改魔数，不擦除、改魔数标记已补传
 										//Log_Write(LOG_WARN,"BUCHUAN Finish");
 								count++;
@@ -138,7 +138,7 @@ xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
             {
                 // 离线缓存
                 char json[128];
-                sprintf(json, "{\"temperature\":%.1f,\"shidu\":%.1f,\"light\":%.0f}", data_q.temp, data_q.shi,data_q.light);
+                pal_mqtt_build_payload(json, sizeof(json), &data_q);   /* payload 格式随 CLOUD_TARGET */
 							HAL_GPIO_WritePin(GPIOE,GPIO_PIN_4,GPIO_PIN_RESET);
                 FlashCache_Write(json, strlen(json));
             }

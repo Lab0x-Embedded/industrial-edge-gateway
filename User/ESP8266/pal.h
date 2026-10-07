@@ -6,39 +6,69 @@
 #include "stm32f4xx.h"
 #include "usart.h"
 #include <string.h>
+#include "Taskhandel.h"     /* Data_t */
 
-// °Í·¨ÔÆ²ÎÊýÅäÖÃ
-#define WIFI_SSID "YQ-shixun5"
-#define WIFI_PASS "88888888"
+/* ============================================================
+ *  云端/连接配置 —— 唯一真值源（改这里，别动 pal.c）
+ * ============================================================ */
+/* WiFi */
+#define WIFI_SSID  "YQ-shixun5"
+#define WIFI_PASS  "88888888"
+
+/* 云平台选择：CLOUD_BEMFA / CLOUD_E2 / CLOUD_ONENET
+ * 也可以构建时覆盖：-DCLOUD_TARGET=CLOUD_E2 */
+#define CLOUD_BEMFA   0
+#define CLOUD_E2      1
+#define CLOUD_ONENET  2
+#ifndef CLOUD_TARGET
+#define CLOUD_TARGET  CLOUD_BEMFA
+#endif
+
+/* 巴法云（默认） */
 #define BEMFA_BROKER "bemfa.com"
-#define BEMFA_PORT 9501
-#define BEMFA_UID "41f3876720ad4ae860db06e35631a855" // °Í·¨ÔÆ¿ØÖÆÌ¨ÓÒÉÏ½ÇµÄË½Ô¿
-#define TOPIC_PUB "stm32"                            // Äã´´½¨µÄÖ÷ÌâÃû
+#define BEMFA_PORT   9501
+#define BEMFA_UID    "41f3876720ad4ae860db06e35631a855"  /* 巴法云控制台右上角的私钥 */
+#define TOPIC_PUB    "stm32"
 
-typedef struct {
-  uint8_t client_id[50];
-  uint8_t username[24];
-  uint8_t password[24];
-  int socket;
-  uint32_t keepalive_interval;
-  uint8_t clean_session;
+/* E2 平台（CLOUD_TARGET=CLOUD_E2 时生效；设备需先在 E2 注册，凭证必须匹配） */
+#ifndef E2_HOST
+#define E2_HOST          "192.168.0.49"
+#endif
+#ifndef E2_PRODUCT_KEY
+#define E2_PRODUCT_KEY   "factory_sensor"
+#endif
+#ifndef E2_DEVICE_ID
+#define E2_DEVICE_ID     "dev_gateway_001"
+#endif
+#ifndef E2_DEVICE_SECRET
+#define E2_DEVICE_SECRET "CHANGE_ME"
+#endif
 
-  // 关键：函数指针成员，用于发送和接收数据
-  int (*send)(void *sock, const void *buf, unsigned int len);
-  int (*recv)(int sock, uint8_t *buf, int buf_len, int timeout);
+/* OneNET Studio（CLOUD_TARGET=CLOUD_ONENET 时生效）
+ * token 在控制台生成；注意 et= 是过期时间戳，到期全部设备掉线，需重新生成 */
+#ifndef ONENET_HOST
+#define ONENET_HOST       "mqtts.heclouds.com"
+#endif
+#ifndef ONENET_PRODUCT_ID
+#define ONENET_PRODUCT_ID "CHANGE_ME"
+#endif
+#ifndef ONENET_DEVICE_ID
+#define ONENET_DEVICE_ID  "CHANGE_ME"
+#endif
+#ifndef ONENET_TOKEN
+#define ONENET_TOKEN      "CHANGE_ME"
+#endif
 
-  void *socket_info;
-} mqtt_broker_handle_t;
-
+/* 透传模式下从 ESP8266 接收原始 TCP 数据 */
 int pal_tcp_recv_raw(int sock, uint8_t *buf, int len, int timeout_ms);
 
-void MQTT_SendTempHumi_NoWait(float temp, float humi, float light);
-
 void MQTT_Init(void);
-void RE_MQTT_Init();
-
-int MQTT_SendTempHumi(float temp, float humi);
+void RE_MQTT_Init(void);
 void MQTT_SendPing(void);
 
-void MQTT_ReConnect();
+/* 统一云端发布接口：topic/QoS/payload 格式由 CLOUD_TARGET 的 profile 决定。
+ * QoS1 平台（E2/OneNET）以收到 PUBACK 为成功依据，返回 0=成功。 */
+void pal_mqtt_build_payload(char *out, size_t n, const Data_t *d);
+int  pal_mqtt_publish(const char *payload);
+
 #endif

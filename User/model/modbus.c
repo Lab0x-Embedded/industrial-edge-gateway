@@ -8,6 +8,7 @@
 #include "task.h"
 #include "flash.h"
 #include "Taskhandel.h"
+#include "pal.h"
 /* ================================================================
  *	查表法
  *  CRC 高字节表 (高 8 位部分)
@@ -269,55 +270,16 @@ extern QueueHandle_t lvgl_data_queue;
 
 void MQTT_SendAllDev_NoWait(void)
 {
-		Data_t UIdat;
-	
-    char payload[256]={0};
-    int p=sprintf(payload,"{");
-    for(uint8_t i=0;i<dev_cnt;i++)
-    {
-        ModDev_t *pt=&dev_list[i];
-        if(pt->dev_addr == 0x01 )
-        {
-            //01温湿度：温度、湿度
-            p += sprintf(payload+p,"{\"temp\":%.1f,\"humi\":%.1f,",pt->val1,pt->val2);
-						UIdat.temp=pt->val1;
-						UIdat.shi=pt->val2;
-        }
-        else if(pt->dev_addr == 0x02)
-        {
-            //02光照
-            p += sprintf(payload+p,"\"light\":%.0f},",pt->val1);
-						UIdat.light=pt->val1;
-        }
-//        else if(pt->dev_addr == 0x03)
-//        {
-//            //03继电器开关
-//            p += sprintf(payload+p,"\"dev3\":{\"state\":%.0f},",pt->val1);
-//        }
-    }
-    //删掉末尾多余逗号
-    if(p>1)
-        payload[p-1]='}';
-		
-		xQueueOverwrite(lvgl_data_queue, &UIdat);	//给ui写队列 覆盖写
-		//发布报文
-    uint8_t buf[256];
-    int pos = 0;
-    buf[pos++] = 0x32;
-    uint16_t tlen=5;
-    uint16_t mlen=strlen(payload);
-    uint16_t rem=2+tlen+2+mlen;
-    do{
-        uint8_t b=rem%128;
-        rem/=128;
-        if(rem>0)b|=0x80;
-        buf[pos++]=b;
-    }while(rem>0);
-    buf[pos++]=0;buf[pos++]=tlen;
-    memcpy(&buf[pos],"stm32",5);pos+=5;
-    buf[pos++]=0;buf[pos++]=1;
-    memcpy(&buf[pos],payload,mlen);pos+=mlen;
-    HAL_UART_Transmit(&huart4, buf, pos, 5000);   /* 实时数据发往 ESP8266：此前缺失，实时包从未出板 */
+    Data_t UIdat;
+    char payload[256];
+
+    UIdat.temp  = dev_list[0].val1;
+    UIdat.shi   = dev_list[0].val2;
+    UIdat.light = dev_list[1].val1;
+
+    xQueueOverwrite(lvgl_data_queue, &UIdat);      /* UI 更新 */
+    pal_mqtt_build_payload(payload, sizeof(payload), &UIdat);
+    pal_mqtt_publish(payload);                     /* 云端上报（topic/QoS/格式由 profile 决定） */
     vTaskDelay(10);
 }
 

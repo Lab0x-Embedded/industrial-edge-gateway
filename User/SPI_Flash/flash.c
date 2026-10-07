@@ -1,5 +1,6 @@
 #include "flash.h"
 #include "bsp_flash.h"
+#include "pal.h"
 #include <string.h>
 #include <stdio.h>
 #include "stm32f4xx.h"
@@ -308,40 +309,13 @@ void FlashCache_Clear(void)
 }
 
 //补传到云端
-void MQTT_PublishJson(const char *json)
+int MQTT_PublishJson(const char *json)
 {
-    uint8_t buf[256];
-    int pos = 0;
-    buf[pos++] = 0x32;                     /* PUBLISH, QoS 1 固定报头 报文类型 */
-
-	uint16_t topic_len = 5;					//主题名长度
-  uint16_t msg_len = strlen(json);
-	uint16_t rem = 2 + topic_len + 2 + msg_len;				//2字节的主题长度+5字节的主题名+2字节的报文标识符+有效载荷长度
-
-	/*变长剩余长度编码 低位在前 低7位表示数据 第八位(标志位)为1的话表示不止一个字节 小于128一个字节 最多4个字节*/
-    do {
-        uint8_t b = rem % 128;
-        rem /= 128;
-        if (rem > 0) b |= 0x80;
-        buf[pos++] = b;
-    } while (rem > 0);
-
-		/*可变报头 两字节的主题长度 0x00 0x05  5字节的主题名 */
-    buf[pos++] = 0;
-    buf[pos++] = topic_len;
-    memcpy(&buf[pos], "stm32", 5);
-    pos += 5;
-
-		/*两字节的报文标识符 0x00 0x01*/
-    buf[pos++] = 0;
-    buf[pos++] = 1;
-
-		/*有效载荷*/
-    memcpy(&buf[pos], json, msg_len);
-    pos += msg_len;
-
-    HAL_UART_Transmit(&huart4, buf, pos, 5000);
+    /* 组包/选 topic/QoS 由云平台 profile 层（pal.c）统一处理；
+     * QoS1 平台以收到 PUBACK 为成功，失败返回 -1（调用方不标记已发，下轮重试） */
+    int ret = pal_mqtt_publish(json);
     vTaskDelay(500);
+    return ret;
 }
 
 // 【 fix 】标记已发送：只改魔数，不擦除、不乱动指针
