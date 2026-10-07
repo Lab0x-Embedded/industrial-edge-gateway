@@ -43,6 +43,11 @@ void LCD_DrawPoint(uint16_t x, uint16_t y, uint16_t color)
 
 void LCD_DrawBigPoint(uint16_t x, uint16_t y, uint16_t color)
 {
+    /* 夹紧到 1..LCD_W-2 / 1..LCD_H-2：x-1 下溢会让 LCD_Fill 开出巨窗卡死 */
+    if (x < 1) x = 1;
+    if (y < 1) y = 1;
+    if (x > LCD_W - 2) x = LCD_W - 2;
+    if (y > LCD_H - 2) y = LCD_H - 2;
     LCD_Fill(x - 1, y - 1, x + 1, y + 1, color);
 }
 

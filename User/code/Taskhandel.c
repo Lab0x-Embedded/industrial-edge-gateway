@@ -216,6 +216,7 @@ void UI(void)
 
     LCD_Init();
     TP_Init();
+    TP_Do_Calibration();   /* 开机两点校准：按提示依次按住 左上/右下 十字中心 */
     lv_init();
     lv_port_disp_init();
     lv_port_indev_init();
