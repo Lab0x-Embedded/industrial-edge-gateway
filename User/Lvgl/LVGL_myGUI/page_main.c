@@ -310,6 +310,13 @@ void page_log_refresh(void)
             cnt++;
         }
     }
+
+    // 自诊断：一条都读不到时显示写指针位置（0=本次开机还没写过日志）
+    if(cnt == 0)
+    {
+        snprintf(buf,sizeof(buf),"(no entries) wptr=%u", (unsigned)log_write_offset);
+        lv_list_add_text(list_log,buf);
+    }
 }
 
 
@@ -369,7 +376,7 @@ void page_main_update_status(uint8_t wifi, uint8_t mqtt)
     else
     {
         lv_label_set_text(label_status, LV_SYMBOL_WIFI" ONLINE");
-        lv_obj_set_style_text_color(label_status, lv_color_hex(0x4ECDC4), 0);
+        lv_obj_set_style_text_color(label_status, lv_color_hex(0x2ECC71), 0);
     }
 }
 

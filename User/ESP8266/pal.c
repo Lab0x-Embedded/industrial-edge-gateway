@@ -81,10 +81,13 @@ void pal_mqtt_build_payload(char *out, size_t n, const Data_t *d) {
            "{\"metric\":\"light\",\"value\":%.0f}]}",
            d->temp, d->shi, d->light);
 #elif CLOUD_TARGET == CLOUD_ONENET
-  /* OneNET 物模型属性上报信封；属性名与控制台物模型逐字一致 */
+  /* OneNET Studio 物模型属性上报：params 里每个属性是 {identifier:{value:..}}；
+   * 属性名与控制台物模型逐字一致，否则整条被拒（code 10411） */
   snprintf(out, n,
-           "{\"id\":\"%u\",\"params\":{\"temperature\":%.1f,"
-           "\"humidity\":%.1f,\"light\":%.0f}}",
+           "{\"id\":\"%u\",\"params\":{"
+           "\"temperature\":{\"value\":%.1f},"
+           "\"humidity\":{\"value\":%.1f},"
+           "\"light\":{\"value\":%.0f}}}",
            (unsigned)(HAL_GetTick() / 1000), d->temp, d->shi, d->light);
 #else
 #error "未知 CLOUD_TARGET（见 pal.h：CLOUD_E2 / CLOUD_ONENET）"
