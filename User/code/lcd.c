@@ -104,7 +104,7 @@ void LCD_Init(void)
     LCD_WR_REG(0xC7); LCD_WR_DATA(0x90);
 
     /* 横屏 320x240（沿用原工程方向寄存器值） */
-    LCD_WR_REG(0x36); LCD_WR_DATA(0x68);
+    LCD_WR_REG(0x36); LCD_WR_DATA(0x60);   /* MX=1,MV=1 横屏；BGR=0（面板为 RGB 序，置 1 会红蓝互换） */
 
     /* 像素格式 RGB565 */
     LCD_WR_REG(0x3A); LCD_WR_DATA(0x55);

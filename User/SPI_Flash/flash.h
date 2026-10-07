@@ -46,10 +46,10 @@ typedef struct
     uint32_t    time_stamp;    // 时间戳：系统运行滴答数 HAL_GetTick()
     Log_Level   level;         // 日志等级
     uint8_t     content[LOG_CONTENT_LEN]; // 日志文本内容
-    uint16_t    magic;         // 魔数：判断这条日志是否有效
+    uint32_t    magic;         // 魔数：判断这条日志是否有效（用 32 位避免结构体尾部填充歧义）
 } Log_Obj;
 
-#define LOG_OBJ_SIZE        sizeof(Log_Obj)					//76
+#define LOG_OBJ_SIZE        sizeof(Log_Obj)					//恰好 76，无填充
 
 // ===================== 3. 全局互斥锁（Flash 全局保护）=====================
 extern SemaphoreHandle_t flash_mutex;
