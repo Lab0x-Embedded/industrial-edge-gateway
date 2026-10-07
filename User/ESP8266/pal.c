@@ -272,6 +272,60 @@ void MQTT_SendPing(void) {
   HAL_UART_Transmit(&huart4, ping, 2, 2000);
 }
 
+/* 消费一条平台下发/回执的 PUBLISH（保持透传字节流对齐）。
+ * OneNET 的属性上报回执带 "code"：0=成功，10411=物模型标识符不存在等；
+ * 解析到的 payload 会写进日志页，方便在屏幕上直接看平台回了什么。 */
+static void mqtt_drain_downlink(void) {
+  uint8_t hdr;
+  char pl[96];
+  size_t plen = 0;
+
+  if (pal_tcp_recv_raw(0, &hdr, 1, 600) != 1)
+    return; /* 超时=本次没有下行 */
+  if ((hdr >> 4) != 0x3)
+    return; /* 不是 PUBLISH，丢弃该字节 */
+
+  /* remaining length（变长编码，1~4 字节） */
+  uint32_t rem = 0;
+  int mult = 1;
+  for (int i = 0; i < 4; i++) {
+    uint8_t b;
+    if (pal_tcp_recv_raw(0, &b, 1, 500) != 1)
+      return;
+    rem += (uint32_t)(b & 0x7F) * mult;
+    mult *= 128;
+    if (!(b & 0x80))
+      break;
+  }
+
+  /* QoS1 下行 body = [tlen2][topic][pid2][payload] */
+  uint8_t body[240];
+  if (rem < 2 || rem > sizeof body) {
+    for (uint32_t i = 0; i < rem; i++) {
+      uint8_t t;
+      pal_tcp_recv_raw(0, &t, 1, 10);
+    }
+    return;
+  }
+  if (pal_tcp_recv_raw(0, body, rem, 500) != (int)rem)
+    return;
+
+  uint16_t tlen = ((uint16_t)body[0] << 8) | body[1];
+  size_t off = 2 + tlen;
+  if (off + 2 > rem)
+    return;
+  off += 2; /* QoS1 Packet ID */
+  plen = rem - off;
+  if (plen > sizeof pl - 1)
+    plen = sizeof pl - 1;
+  memcpy(pl, &body[off], plen);
+  pl[plen] = '\0';
+
+  /* 是平台回执（带 code）才写日志，避免刷屏 */
+  if (strstr(pl, "\"code\"") != NULL)
+    Log_Write(strstr(pl, "\"code\":0") != NULL ? LOG_INFO : LOG_WARN, pl);
+}
+
 /* 统一发布入口：PUBLISH 到 profile 的 topic_pub；
  * QoS1 平台（E2/OneNET）等 PUBACK，收到才返回 0。 */
 int pal_mqtt_publish(const char *payload) {
@@ -310,6 +364,7 @@ int pal_mqtt_publish(const char *payload) {
     uint8_t ack[4];
     if (pal_tcp_recv_raw(0, ack, 4, 2000) != 4 || ack[0] != 0x40)
       return -1; /* 未收到 PUBACK */
+    mqtt_drain_downlink(); /* 平台回执（code）进日志页，同时保持字节流对齐 */
   }
   return 0;
 }
