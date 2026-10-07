@@ -36,21 +36,6 @@ typedef struct {
 } CloudProfile;
 
 static const CloudProfile profiles[] = {
-    [CLOUD_BEMFA] =
-        {
-            .host = BEMFA_BROKER,
-            .port = BEMFA_PORT,
-            .proto_name = "MQIsdp",
-            .proto_level = 3,
-            .connect_flags = 0x02,
-            .client_id = BEMFA_UID,
-            .username = "",
-            .password = "",
-            .keepalive = 120,
-            .topic_pub = TOPIC_PUB,
-            .topic_sub = TOPIC_PUB,
-            .qos1 = 0,
-        },
     [CLOUD_E2] =
         {
             .host = E2_HOST,
@@ -101,9 +86,8 @@ void pal_mqtt_build_payload(char *out, size_t n, const Data_t *d) {
            "{\"id\":\"%u\",\"params\":{\"temperature\":%.1f,"
            "\"humidity\":%.1f,\"light\":%.0f}}",
            (unsigned)(HAL_GetTick() / 1000), d->temp, d->shi, d->light);
-#else /* CLOUD_BEMFA */
-  snprintf(out, n, "{\"temp\":%.1f,\"humi\":%.1f,\"light\":%.0f}", d->temp,
-           d->shi, d->light);
+#else
+#error "未知 CLOUD_TARGET（见 pal.h：CLOUD_E2 / CLOUD_ONENET）"
 #endif
 }
 

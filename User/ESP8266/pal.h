@@ -15,20 +15,13 @@
 #define WIFI_SSID  "YQ-shixun5"
 #define WIFI_PASS  "88888888"
 
-/* 云平台选择：CLOUD_BEMFA / CLOUD_E2 / CLOUD_ONENET
- * 也可以构建时覆盖：-DCLOUD_TARGET=CLOUD_E2 */
-#define CLOUD_BEMFA   0
-#define CLOUD_E2      1
-#define CLOUD_ONENET  2
+/* 云平台选择：CLOUD_E2 / CLOUD_ONENET
+ * 也可以构建时覆盖：-DCLOUD_TARGET=CLOUD_ONENET */
+#define CLOUD_E2      0
+#define CLOUD_ONENET  1
 #ifndef CLOUD_TARGET
-#define CLOUD_TARGET  CLOUD_BEMFA
+#define CLOUD_TARGET  CLOUD_E2
 #endif
-
-/* 巴法云（默认） */
-#define BEMFA_BROKER "bemfa.com"
-#define BEMFA_PORT   9501
-#define BEMFA_UID    "41f3876720ad4ae860db06e35631a855"  /* 巴法云控制台右上角的私钥 */
-#define TOPIC_PUB    "stm32"
 
 /* E2 平台（CLOUD_TARGET=CLOUD_E2 时生效；设备需先在 E2 注册，凭证必须匹配） */
 #ifndef E2_HOST
