@@ -254,19 +254,18 @@ void Modbus_Poll_AllDev(void)
 
 
 /*//将采集到的数据赋值给结构体 然后写入队列*/
+extern QueueHandle_t lvgl_data_queue;
+
 void Modbus_Upload_Json(void)
 {
-    
     Data_t uidata;
-	
-    uidata.temp = dev_list[0].val1;
-    uidata.shi = dev_list[0].val2;
-		uidata.light= dev_list[1].val1;
+
+    uidata.temp  = dev_list[0].val1;
+    uidata.shi   = dev_list[0].val2;
+    uidata.light = dev_list[1].val1;
     xQueueOverwrite(data_queue, &uidata);
+    xQueueOverwrite(lvgl_data_queue, &uidata);   /* UI 离线也要刷新，不再依赖云端在线 */
 }
-
-
-extern QueueHandle_t lvgl_data_queue;   
 
 void MQTT_SendAllDev_NoWait(void)
 {
@@ -277,7 +276,6 @@ void MQTT_SendAllDev_NoWait(void)
     UIdat.shi   = dev_list[0].val2;
     UIdat.light = dev_list[1].val1;
 
-    xQueueOverwrite(lvgl_data_queue, &UIdat);      /* UI 更新 */
     pal_mqtt_build_payload(payload, sizeof(payload), &UIdat);
     pal_mqtt_publish(payload);                     /* 云端上报（topic/QoS/格式由 profile 决定） */
     vTaskDelay(10);
