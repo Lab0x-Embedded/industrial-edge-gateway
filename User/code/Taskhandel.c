@@ -233,7 +233,19 @@ void UI(void)
 	while (1)				//任务函数 不会退出该函数 故局部变量不会被清空
     {
 		
-				// 空闲10s无动作 → 息屏
+				// 触摸按下：重置空闲计时；黑屏中则点亮（唤醒的这次触摸不当作点击）
+        if (HAL_GPIO_ReadPin(TP_PEN_GPIO_Port, TP_PEN_Pin) == GPIO_PIN_RESET)
+        {
+            idle_tick = xTaskGetTickCount();
+            if (lcd_bl_en == 0)
+            {
+                HAL_GPIO_WritePin(GPIOF, GPIO_PIN_10, GPIO_PIN_SET);
+                lcd_bl_en = 1;
+                lv_indev_wait_release(lv_indev_get_act());
+            }
+        }
+
+		// 空闲10s无动作 → 息屏
         if(lcd_bl_en == 1 && (xTaskGetTickCount() - idle_tick >= pdMS_TO_TICKS(10000)))
         {
             HAL_GPIO_WritePin(GPIOF,GPIO_PIN_10,GPIO_PIN_RESET);

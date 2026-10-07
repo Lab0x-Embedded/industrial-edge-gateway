@@ -26,10 +26,15 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "Taskhandel.h"
+#include "queue.h"
+#include "semphr.h"
 /* 这些全局定义在 Taskhandel.c */
 extern TickType_t idle_tick;
 extern TickType_t power_tick;
 extern uint8_t    lcd_bl_en;
+extern QueueHandle_t data_queue;
+extern QueueHandle_t lvgl_data_queue;
+extern SemaphoreHandle_t uart1_mutex;
 #include "lvgl.h"
 /* USER CODE END Includes */
 
@@ -89,7 +94,7 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */
-  /* add mutexes, ... */
+  uart1_mutex = xSemaphoreCreateMutex();
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
@@ -101,7 +106,8 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
+  data_queue      = xQueueCreate(1, sizeof(Data_t));   /* Modbus 用 xQueueOverwrite 写，长度必须为 1 */
+  lvgl_data_queue = xQueueCreate(1, sizeof(Data_t));
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
