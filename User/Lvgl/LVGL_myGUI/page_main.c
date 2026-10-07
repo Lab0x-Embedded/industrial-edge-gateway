@@ -28,8 +28,9 @@ static lv_obj_t *btn_back;         //日志页返回按钮
 
 extern lv_obj_t *main_scr;
 static void btn_back_click(lv_event_t *e);
-void page_main_update_status(uint8_t connected);
+void page_main_update_status(uint8_t wifi, uint8_t mqtt);
 extern  uint32_t log_write_offset ;
+extern volatile uint8_t wifi_connected;    // ESP8266 已连上 AP（pal.c 维护）
 
 lv_obj_t *page_log_create(void)
 {
@@ -78,7 +79,7 @@ static void btn_back_click(lv_event_t *e)
 {
 
 	lv_scr_load(main_scr);
-	 page_main_update_status(g_mqtt_connected);				//返回主页面后更新连接状态
+	 page_main_update_status(wifi_connected, g_mqtt_connected);				//返回主页面后更新连接状态
 }
 
 
@@ -230,12 +231,12 @@ lv_obj_t *page_main_create(void)
     lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);       // 禁止状态栏滑动
     lv_obj_set_scrollbar_mode(footer, LV_SCROLLBAR_MODE_OFF);			//关闭滑动条
 
-    // 左侧：连接状态提示
+    // 状态栏左侧：WiFi 连接状态（LVGL 内置 WiFi 图标 + 英文，不占中文字库）
     label_status = lv_label_create(footer);
-    lv_label_set_text(label_status, "● 等待连接...");
+    lv_label_set_text(label_status, LV_SYMBOL_WIFI" OFF");
     lv_obj_align(label_status, LV_ALIGN_LEFT_MID, 6, 0);
-    lv_obj_set_style_text_color(label_status, lv_color_hex(0xE2E8F0), 0);
-    lv_obj_set_style_text_font(label_status, &font_chinese_9, 0);
+    lv_obj_set_style_text_color(label_status, lv_color_hex(0xFF6B6B), 0);
+    lv_obj_set_style_text_font(label_status, &lv_font_montserrat_14, 0);
 
     // 右侧：系统运行时长
     label_uptime = lv_label_create(footer);
@@ -304,9 +305,8 @@ void page_log_refresh(void)
                 case LOG_ERROR: level_str="ERROR";break;
                 default:level_str="UNK";break;
             }
-            snprintf(buf,sizeof(buf),"%02u:%02u:%02u %s %s",h,m,s,level_str,log_tmp.content);
-            lv_obj_t *item = lv_list_add_text(list_log,buf);
-           // lv_obj_set_style_text_font(item,&font_chinese_9,0);
+            snprintf(buf,sizeof(buf),"%02u:%02u:%02u %s %s",(unsigned)h,(unsigned)m,(unsigned)s,level_str,log_tmp.content);
+            lv_list_add_text(list_log,buf);
             cnt++;
         }
     }
@@ -353,18 +353,23 @@ void page_main_update_data(float temp, float humi, float light)
 
 
 // 更新连接状态
-void page_main_update_status(uint8_t connected)
+void page_main_update_status(uint8_t wifi, uint8_t mqtt)
 {
 	if(!label_status) return;																									//创建成功为1 label_status 底部部件文本
-    if(connected)
+    if(!wifi)
     {
-        lv_label_set_text(label_status, "在线");
-        lv_obj_set_style_text_color(label_status, lv_color_hex(0x4ECDC4), 0);
+        lv_label_set_text(label_status, LV_SYMBOL_WIFI" OFF");
+        lv_obj_set_style_text_color(label_status, lv_color_hex(0xFF6B6B), 0);
+    }
+    else if(!mqtt)
+    {
+        lv_label_set_text(label_status, LV_SYMBOL_WIFI" NO CLOUD");
+        lv_obj_set_style_text_color(label_status, lv_color_hex(0xF6AD55), 0);
     }
     else
     {
-        lv_label_set_text(label_status, "离线");
-        lv_obj_set_style_text_color(label_status, lv_color_hex(0xFF6B6B), 0);
+        lv_label_set_text(label_status, LV_SYMBOL_WIFI" ONLINE");
+        lv_obj_set_style_text_color(label_status, lv_color_hex(0x4ECDC4), 0);
     }
 }
 
@@ -375,7 +380,7 @@ void page_main_update_uptime(uint32_t seconds)
     uint32_t h = seconds / 3600;
     uint32_t m = (seconds % 3600) / 60;
     uint32_t s = seconds % 60;
-    lv_label_set_text_fmt(label_uptime, "运行 %02d:%02d:%02d", h, m, s);
+    lv_label_set_text_fmt(label_uptime, "运行 %02u:%02u:%02u", (unsigned)h, (unsigned)m, (unsigned)s);
 }
 
 

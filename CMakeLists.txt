@@ -58,7 +58,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     User/SPI_Flash
     User/Lvgl
     User/Lvgl/LVGL_myGUI
-    User/Lvgl/examples/porting
+    User/Lvgl/porting
 )
 
 # Add project symbols (macros)
