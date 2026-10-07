@@ -317,7 +317,7 @@ void MQTT_SendAllDev_NoWait(void)
     memcpy(&buf[pos],"stm32",5);pos+=5;
     buf[pos++]=0;buf[pos++]=1;
     memcpy(&buf[pos],payload,mlen);pos+=mlen;
-    /* debug print removed: was on ESP uart */
+    HAL_UART_Transmit(&huart4, buf, pos, 5000);   /* 实时数据发往 ESP8266：此前缺失，实时包从未出板 */
     vTaskDelay(10);
 }
 

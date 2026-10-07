@@ -44,7 +44,6 @@ uint32_t last_ping = 0;
 
 extern IWDG_HandleTypeDef hiwdg;
  volatile uint8_t g_mqtt_connected;
-volatile uint8_t connect;
 
 // ==============================================
 // Modbus 采集
@@ -112,10 +111,12 @@ xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
 											MQTT_PublishJson(cached);
 											FlashCache_MarkSent();				//只改魔数，不擦除、改魔数标记已补传
 										//Log_Write(LOG_WARN,"BUCHUAN Finish");
-											count++;
-										if(count>4)
-											Log_Write(LOG_INFO,"BUCHUAN Finish");
-											vTaskDelay(800);
+								count++;
+								if (count > 4)
+								{
+									Log_Write(LOG_INFO,"BUCHUAN Finish");
+								}
+								vTaskDelay(800);
 									}
 									else
 									{
@@ -177,25 +178,18 @@ void AT(void)
             {
                 // 心跳正常
                 heart_fail = 0;
-							connect=0;
-						
             }
             else							// 心跳超时或数据错误
             {
-                
-							if(connect==0)
-							{
                 heart_fail++;
                 if (heart_fail >= 3)  // 连续 3 次失败，约 30 秒
                 {
                     g_mqtt_connected = 0;					//断网
-										Log_Write(LOG_WARN, "MQTT disconnect");
-										HAL_GPIO_WritePin(GPIOE,GPIO_PIN_4,GPIO_PIN_RESET);
-										HAL_GPIO_WritePin(GPIOG,GPIO_PIN_9,GPIO_PIN_SET);
+						Log_Write(LOG_WARN, "MQTT disconnect");
+						HAL_GPIO_WritePin(GPIOE,GPIO_PIN_4,GPIO_PIN_RESET);
+						HAL_GPIO_WritePin(GPIOG,GPIO_PIN_9,GPIO_PIN_SET);
                     heart_fail = 0;
-									  
                 }
-							}
             }
         }
 				else
@@ -227,10 +221,10 @@ void UI(void)
     uint32_t start_tick = xTaskGetTickCount();
     
     uint8_t  last_status = 0xFF;      // 记录上一次的 MQTT 状态
+    uint8_t  last_wifi   = 0xFF;      // 记录上一次的 WiFi 状态
     uint32_t last_uptime  = 0xFFFFFFFF; // 记录上一次的运行时间    魔法数
 		
-		uint32_t log_tick =0; //定义局部计时变量
-	
+
 	while (1)				//任务函数 不会退出该函数 故局部变量不会被清空
     {
 		
@@ -260,11 +254,12 @@ void UI(void)
 
         }
 
-        // MQTT连接状态变更也刷新亮屏
-        if (g_mqtt_connected != last_status)
+        // WiFi/MQTT 状态变更也刷新亮屏
+        if (wifi_connected != last_wifi || g_mqtt_connected != last_status)
         {
+            last_wifi   = wifi_connected;
             last_status = g_mqtt_connected;
-						page_main_update_status(g_mqtt_connected);				//更新ui状态显示
+						page_main_update_status(wifi_connected, g_mqtt_connected);	//更新ui状态显示
 					
             idle_tick = xTaskGetTickCount();
             HAL_GPIO_WritePin(GPIOF,GPIO_PIN_10,GPIO_PIN_SET);
