@@ -3,7 +3,7 @@
  * 通过板载 RS485（USART2 PA2/PA3，收发使能 PG6，9600-8N1）模拟网关
  * dev_list[] 里的两台变送器：
  *   从机 0x01  温湿度  保持寄存器 0x0001 ×2：温度 = reg0/10 ℃，湿度 = reg1/10 %
- *              数据源：真实 DHT11，DATA 接 PB9（模块自带 4.7k~10k 上拉，
+ *              数据源：真实 DHT11，DATA 接 PA15（模块自带 4.7k~10k 上拉，
  *              裸传感器需在 DATA 与 3.3V 之间自接），读失败沿用上次数值
  *   从机 0x02  光照    保持寄存器 0x0002 ×2：光照 = (reg0<<16|reg1)/1000 lx
  *              数据源：随机缓变的模拟值
@@ -27,9 +27,10 @@ static uint32_t light_raw32 = 12345000; /* 12345 lx × 1000 */
 static uint16_t reg01[2];               /* 0x0001..0x0002 */
 static uint16_t reg02[2];               /* 0x0002..0x0003 */
 
-/* ================= DHT11（单总线，DATA=PB9） ================= */
-#define DHT_GPIO        GPIOB
-#define DHT_PIN         GPIO_PIN_9
+/* ================= DHT11（单总线，DATA=PA15） =================
+ * PA15 复位后默认是 JTAG TDI（AF0），配置成 GPIO 后自动脱离，SWD 烧录不受影响。 */
+#define DHT_GPIO        GPIOA
+#define DHT_PIN         GPIO_PIN_15
 #define DHT_CYC_PER_US  168     /* 168MHz HCLK */
 
 void Error_Handler(void);
