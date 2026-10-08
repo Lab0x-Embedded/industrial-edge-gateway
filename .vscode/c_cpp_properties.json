@@ -5,5 +5,5 @@
             "compileCommands": "${workspaceFolder}/build/Debug/compile_commands.json"
         }
     ],
-    "version": 1
+    "version": 4
 }
