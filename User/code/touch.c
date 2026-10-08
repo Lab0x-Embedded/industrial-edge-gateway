@@ -161,7 +161,19 @@ void TP_Do_Calibration(void)
     uint16_t sy1, sx1, sy2, sx2;
 
     LCD_Clear(0xFFFF);
-    if (TP_TryLoadCal()) return;               /* Flash 里有有效校准，免校准开机 */
+
+    /* 强制重新校准入口：开机按住屏幕（PEN 为低）→ 忽略 Flash 里的旧校准。
+     * 换板/换屏/校准漂移时按住开机即可重校，不必擦 Flash。 */
+    {
+        uint8_t hold = 0;
+        for (uint32_t i = 0; i < 50; i++)      /* 采样 500ms，滤掉上电抖动 */
+        {
+            if (TP_PEN() == GPIO_PIN_RESET) hold++;
+            vTaskDelay(10);
+        }
+        if (hold < 30)                          /* 没按住 → 尝试装载旧校准 */
+            if (TP_TryLoadCal()) return;        /* Flash 里有有效校准，免校准开机 */
+    }
 
     TP_DrawCross(CAL_CX1, CAL_CY1, 0xF800);
     do { TP_WaitSample(&sy1, &sx1); } while (sx1 == 0);

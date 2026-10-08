@@ -7,6 +7,14 @@
 - 编译产物：`build/industrial-edge-gateway.elf / .bin / .hex`
 - 资源占用：Flash 367KB / 1MB（36%），RAM 90KB / 128KB（70%）
 
+
+## 使用方法
+
+1. 使用 STM32CubeMX 导入 `industrial-edge-gateway.ioc`，CubeMX 版本为 6.18.1。
+2. 点击 “Generate Code”，基于 CMake 生成工程。根据你使用的编辑器选择对应的 Toolchain，默认是 CMake + GCC。
+3. 配置 VS Code 运行工程：安装最新版 VS Code，并安装 [STM32CubeMX 扩展](https://marketplace.visualstudio.com/items?itemName=stmicroelectronics.stm32-vscode-extension)。
+4. 根据右下角提示进行配置，通常一路点击“是”即可。烧录时，使用 Debug 模式并创建 `launch.json` 文件。
+
 ## 目录结构
 
 ```
