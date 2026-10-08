@@ -7,4 +7,4 @@ mx.scratch
 .settings
 cmake
 CMakePresets.json
-.vscode/c_cpp_properties.json
+.vscode
