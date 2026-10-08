@@ -9,14 +9,15 @@
 #include "flash.h"
 #include "Taskhandel.h"
 #include "pal.h"
+
 /* ================================================================
  *	查表法
  *  CRC 高字节表 (高 8 位部分)
  *  由多项式 0x8005 预计算生成，共 256 项
  * ================================================================ */
- 
- extern QueueHandle_t     data_queue;
- extern UART_HandleTypeDef huart2;
+
+extern QueueHandle_t     data_queue;
+extern UART_HandleTypeDef huart2;
 
 static const uint8_t auchCRCHi[] = {
     0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0,
@@ -76,194 +77,183 @@ static const uint8_t auchCRCLo[] = {
     0x43, 0x83, 0x41, 0x81, 0x80, 0x40
 };
 
-
-
 /****************************************************手敲*************************************************************/
-/*CRC16校验*/
-
-/*
-一般情况 低地址在前 小端排序（低位字节在低地址）低字节在前  大端排序 高字节在前
-*/
-uint16_t CRC_16_MODBUS(uint8_t *data,uint8_t len,uint8_t flag)
+/* CRC16 校验 */
+uint16_t CRC_16_MODBUS(uint8_t *data, uint8_t len, uint8_t flag)
 {
-	if(flag)
-	{
-		/*按位循环法*/
-		uint16_t crc=0xffff;
-		while(len--)
-		{
-			crc^=*data++;
-			for(int i=0;i<8;i++)
-			{
-				if(crc &1)
-				{
-					crc=(crc>>1)^0xA001;
-				}
-				else
-				{
-					crc>>=1;
-				}
-			}
-		}
-		return crc;
-	}
-	else
-	{
-		/*查表法*/
-		uint8_t CRCL=0xff;
-		uint8_t CRCH=0xff;
-		uint8_t index=0;
-		while(len--)
-		{
-			index=CRCL^*data++;
-			CRCL=CRCH^auchCRCHi[index];
-			CRCH=auchCRCLo[index];
-		}
-		return (CRCH<<8)|CRCL;
-	}
+    if (flag)
+    {
+        /* 按位循环法 */
+        uint16_t crc = 0xffff;
+        while (len--)
+        {
+            crc ^= *data++;
+            for (int i = 0; i < 8; i++)
+            {
+                if (crc & 1)
+                    crc = (crc >> 1) ^ 0xA001;
+                else
+                    crc >>= 1;
+            }
+        }
+        return crc;
+    }
+    else
+    {
+        /* 查表法 */
+        uint8_t CRCL = 0xff;
+        uint8_t CRCH = 0xff;
+        uint8_t index = 0;
+        while (len--)
+        {
+            index = CRCL ^ *data++;
+            CRCL = CRCH ^ auchCRCHi[index];
+            CRCH = auchCRCLo[index];
+        }
+        return (CRCH << 8) | CRCL;
+    }
 }
 
-
-// 结构体数组 多从机配置：地址、功能码、起始寄存器、寄存器数量、错误计数、数据
- ModDev_t dev_list[]={
-    {0x01,0x03,0x0001,2,0,0,0}, //1#温湿度
-    {0x02,0x03,0x0002,2,0,0,0} //2#光照
+/* 结构体数组 多从机配置：地址、功能码、起始寄存器、寄存器数量、错误计数、数据 */
+ModDev_t dev_list[] = {
+    {0x01, 0x03, 0x0001, 2, 0, 0, 0, 0}, // 1#温湿度
+    {0x02, 0x03, 0x0002, 2, 0, 0, 0, 0}  // 2#光照
 };
-uint8_t dev_cnt = sizeof(dev_list)/sizeof(ModDev_t);
-#define MAX_ERR_CNT 5   //连续失败5次临时跳过该设备
-
-
+uint8_t dev_cnt = sizeof(dev_list) / sizeof(ModDev_t);
+#define MAX_ERR_CNT 5   // 连续失败 5 次临时跳过该设备
 
 /**
- * @brief 通用Modbus03读寄存器   采集数据
- * @param addr:从机地址 func:功能码 reg:起始地址 regcnt:寄存器数量 buf:接收缓存
- * @retval 0失败 1成功
-*/
-uint8_t Modbus_Read_Dev(uint8_t addr,uint8_t func,uint16_t reg,uint16_t regcnt,uint16_t *buf)
+ * @brief 通用 Modbus03 读寄存器   采集数据
+ * @param addr: 从机地址  func: 功能码  reg: 起始地址  regcnt: 寄存器数量  buf: 接收缓存
+ * @retval 0 失败 1 成功
+ */
+uint8_t Modbus_Read_Dev(uint8_t addr, uint8_t func, uint16_t reg, uint16_t regcnt, uint16_t *buf)
 {
     uint8_t tx[8];
     uint8_t rx[32];
-    uint8_t count=0;
-    uint16_t crc=0;
+    uint8_t count = 0;
+    uint16_t crc = 0;
 
-    //组问询帧
+    /* 组问询帧 */
     tx[0] = addr;
     tx[1] = func;
-    tx[2] = (reg>>8)&0xFF;
-    tx[3] = reg&0xFF;
-    tx[4] = (regcnt>>8)&0xFF;
-    tx[5] = regcnt&0xFF;
+    tx[2] = (reg >> 8) & 0xFF;
+    tx[3] = reg & 0xFF;
+    tx[4] = (regcnt >> 8) & 0xFF;
+    tx[5] = regcnt & 0xFF;
 
-    crc=CRC_16_MODBUS(tx,6,0);
-    tx[6]=crc&0xFF;
-    tx[7]=(crc>>8)&0xFF;
+    crc = CRC_16_MODBUS(tx, 6, 0);
+    tx[6] = crc & 0xFF;
+    tx[7] = (crc >> 8) & 0xFF;
 
-    memset(rx,0,sizeof(rx));
-	      // 关键：清空UART接收标志，清除上一轮残留
-    __HAL_UART_CLEAR_FLAG(&huart2, UART_FLAG_RXNE | UART_FLAG_ORE);
-	
+    memset(rx, 0, sizeof(rx));
+
+    /* 清除 UART 错误标志和残留数据 */
+    __HAL_UART_CLEAR_OREFLAG(&huart2);
+    volatile uint32_t tmp = huart2.Instance->DR;  // 读 DR 清 RXNE
+    (void)tmp;
+
     RS485_TX;
-    HAL_UART_Transmit(&huart2,tx,8,1000);
-    vTaskDelay(1);
+    if (HAL_UART_Transmit(&huart2, tx, 8, 1000) != HAL_OK)
+    {
+        RS485_RX;
+        return 0;
+    }
+    /* 删除原 vTaskDelay(1); 发送完立即切换接收 */
     RS485_RX;
 
-    uint32_t start=HAL_GetTick();
-    uint32_t upd=HAL_GetTick();
-    count=0;
-    //沿用你原有阻塞轮询接收逻辑完全不变
-    while(1)
+    uint32_t start = HAL_GetTick();
+    uint32_t upd = HAL_GetTick();
+    count = 0;
+
+    /* 轮询接收（建议后续改为中断/DMA，当前使用 taskYIELD 降低丢包） */
+    while (1)
     {
-        if(__HAL_UART_GET_FLAG(&huart2,UART_FLAG_RXNE))
+        if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE))
         {
-            uint8_t ch=huart2.Instance->DR&0xFF;
-            if(count<sizeof(rx)) rx[count++]=ch;
-            upd=HAL_GetTick();
+            uint8_t ch = (uint8_t)(huart2.Instance->DR & 0xFF);
+            if (count < sizeof(rx)) rx[count++] = ch;
+            upd = HAL_GetTick();
         }
-        if(count>0 && (HAL_GetTick()-upd)>50) break;			//帧间隔3.5个字符 4ms左右
-        if(HAL_GetTick()-start>800) break;								//绝对超时
-        vTaskDelay(1);
+        if (count > 0 && (HAL_GetTick() - upd) > 50) break;  // 帧间隔 3.5 字符
+        if (HAL_GetTick() - start > 800) break;               // 绝对超时
+        taskYIELD();  // 替代 vTaskDelay(1)，让出 CPU 但不固定延时
     }
 
-    //校验长度+地址+CRC
-    uint8_t data_len = rx[2];			//数据字节数
-    uint16_t crc_calc = CRC_16_MODBUS(rx,count-2,1);
-    if(count == (3+data_len+2) && rx[0]==addr && rx[1]==func
-        && (rx[count-2]==(crc_calc&0xFF)) && (rx[count-1]==((crc_calc>>8)&0xFF)))
+    /* 长度安全检查：最小帧为 地址 + 功能码 + 字节数 + 2 字节 CRC */
+    if (count < 4) return 0;
+
+    uint8_t data_len = rx[2];  // 数据字节数
+    /* 校验总长度、地址、功能码、数据长度 */
+    if (count != (3 + data_len + 2) || rx[0] != addr || rx[1] != func || data_len != regcnt * 2)
+        return 0;
+
+    uint16_t crc_calc = CRC_16_MODBUS(rx, count - 2, 1);
+    if ((rx[count - 2] == (crc_calc & 0xFF)) && (rx[count - 1] == ((crc_calc >> 8) & 0xFF)))
     {
-        //数据转存到buf
-        for(uint8_t i=0;i<regcnt;i++)					//一个寄存器是两个字节 一个数据
+        /* 数据转存到 buf */
+        for (uint8_t i = 0; i < regcnt; i++)
         {
-            buf[i] = (rx[3+i*2]<<8)|rx[4+i*2];
+            buf[i] = (rx[3 + i * 2] << 8) | rx[4 + i * 2];
         }
         return 1;
     }
     return 0;
 }
 
-
-
-
 void Modbus_Poll_AllDev(void)
 {
     uint16_t tmp_buf[8];
-    for(uint8_t i=0;i<dev_cnt;i++)		//dev_cnt数组元素个数
+    for (uint8_t i = 0; i < dev_cnt; i++)
     {
         ModDev_t *p = &dev_list[i];
-			 memset(tmp_buf, 0, sizeof(tmp_buf)); // 新增：每次读取前清空缓存
-        //连续错误超限，跳过本次轮询
-//        if(p->err_cnt >= MAX_ERR_CNT)
-//        {
-//            continue;
-//        }
+        memset(tmp_buf, 0, sizeof(tmp_buf));
 
-        //发起读取
-        if(Modbus_Read_Dev(p->dev_addr,p->func,p->reg_start,p->reg_num,tmp_buf)==1)
+        /* 连续错误超限，跳过本次轮询（原注释保留，可根据需求启用） */
+        // if (p->err_cnt >= MAX_ERR_CNT) continue;
+
+        if (Modbus_Read_Dev(p->dev_addr, p->func, p->reg_start, p->reg_num, tmp_buf) == 1)
         {
-         if(p->err_cnt >= MAX_ERR_CNT)
-             Log_Write(LOG_INFO, p->dev_addr==1 ? "modbus 0x01 back online" : "modbus 0x02 back online");
-         p->err_cnt = 0;
-         p->valid = 1;   //成功读到过：数据才允许上云
-         //   p->err_cnt = 0; //成功清零错误计数
-            //根据从机地址解析数据
-            switch(p->dev_addr)
+            if (p->err_cnt >= MAX_ERR_CNT)
             {
-                case 0x01: //温湿度
-                    p->val1 = tmp_buf[0]/10.0f;
-                    p->val2 = tmp_buf[1]/10.0f;
-                    break;
-                case 0x02: //光照
-                    p->val1 = ((uint32_t)tmp_buf[0]<<16 | tmp_buf[1])/1000;
-                    p->val2 = 0;
-                    break;
-//                case 0x03: //继电器状态
-//                    p->val1 = tmp_buf[0];
-//                    p->val2 = 0;
-//                    break;
-                default:break;
+                char log_buf[64];
+                snprintf(log_buf, sizeof(log_buf), "modbus 0x%02X back online", p->dev_addr);
+                Log_Write(LOG_INFO, log_buf);
+            }
+            p->err_cnt = 0;
+            p->valid = 1;   // 成功读到过：数据才允许上云
+
+            /* 根据从机地址解析数据 */
+            switch (p->dev_addr)
+            {
+            case 0x01: // 温湿度
+                p->val1 = tmp_buf[0] / 10.0f;
+                p->val2 = tmp_buf[1] / 10.0f;
+                break;
+            case 0x02: // 光照
+                p->val1 = ((uint32_t)tmp_buf[0] << 16 | tmp_buf[1]) / 1000.0f;  // 浮点除法
+                p->val2 = 0;
+                break;
+            default:
+                break;
             }
         }
-//        else
-//        {
-//            p->err_cnt++;
-////            if(p->err_cnt == MAX_ERR_CNT)
-////            {
-////             //   Log_Write(LOG_ERROR,"Mod dev%d offline suspend");
-////            }
-//        }
         else
         {
             p->err_cnt++;
-            if(p->err_cnt == MAX_ERR_CNT)   //连续 5 次失败：日志记一条，RS485 掉线可见
-                Log_Write(LOG_ERROR, p->dev_addr==1 ? "modbus 0x01 offline" : "modbus 0x02 offline");
+            if (p->err_cnt == MAX_ERR_CNT)
+            {
+                p->valid = 0;  // 离线后清除有效标志，避免上报过期数据
+                char log_buf[64];
+                snprintf(log_buf, sizeof(log_buf), "modbus 0x%02X offline", p->dev_addr);
+                Log_Write(LOG_ERROR, log_buf);
+            }
         }
-        vTaskDelay(pdMS_TO_TICKS(30)); //单从机间隔防总线干扰					重点时间不能过大！！！！！！！
+        vTaskDelay(pdMS_TO_TICKS(30)); // 单从机间隔防总线干扰（重点时间不能过大）
     }
 }
 
-
-
-
-/*//将采集到的数据赋值给结构体 然后写入队列*/
+/* 将采集到的数据赋值给结构体 然后写入队列 */
 extern QueueHandle_t lvgl_data_queue;
 
 void Modbus_Upload_Json(void)
@@ -298,75 +288,75 @@ void MQTT_SendAllDev_NoWait(void)
     vTaskDelay(10);
 }
 
-/*																	USART2
-手动轮询RXNE：不依赖HAL库的阻塞接收或中断接收，零延迟读取每个字节。
-
-双重超时保护：50ms帧间隔（Modbus标准3.5字符/4ms）和800ms绝对超时，保证不卡死。
-
-vTaskDelay(1)：在FreeRTOS下主动让出CPU，保证UI和MQTT任务不被饿死。
-
-没有开启串口中断接收 检查状态寄存器 有数据就读DR 读完后状态会变为0
-*/
-int Modbus_Get_Temp(float *temp,float *shi)
+/*
+ * 注意：以下 Modbus_Get_Temp 函数与 Modbus_Read_Dev 功能重复，
+ * 建议直接使用 Modbus_Read_Dev 替代。此处保留仅为兼容旧代码，并已修复长度检查等问题。
+ */
+int Modbus_Get_Temp(float *temp, float *shi)
 {
-	uint8_t tx[8];
-	uint8_t rx[20];
-	uint8_t count=0;
-	uint16_t crc=0;
-	
-	/*问询帧*/
-	tx[0]=0x01;
-	tx[1]=0x03;
-	tx[2]=0x00;
-	tx[3]=0x01;
-	tx[4]=0x00;
-	tx[5]=0x02;
-	
-	/*小端排序 低字节在前 （低字节在低地址 ，低地址默认在前）*/
-	crc=CRC_16_MODBUS(tx,6,0);
-	tx[6]=crc &0xff;
-	tx[7]=(crc>>8)&0xff;
-	
-	memset(rx,0,sizeof(rx));
-	RS485_TX;
-	HAL_UART_Transmit(&huart2,tx,sizeof(tx),1000);			//发送问询帧
-	vTaskDelay(1);
-	
-	RS485_RX;				//切换为接收模式
-	
-	uint32_t start_time=HAL_GetTick();
-	uint32_t up_time=HAL_GetTick();
-	
-	while(1)
-	{
-		if(__HAL_UART_GET_FLAG(&huart2,UART_FLAG_RXNE))
-		{
-			uint8_t ch=huart2.Instance->DR &0xff;		//DR寄存器有数据时 状态寄存器为1  读取DR寄存器的值 状态清零
-			if(count<sizeof(rx))
-			{
-				rx[count++]=ch;
-				up_time=HAL_GetTick();
-			}
-		}
-		if(count>0 && (HAL_GetTick()-up_time)>50)					//帧与帧间隔3.5个字符 4ms
-		{
-			break;
-		}
-		if(HAL_GetTick()-start_time>800)										//绝对超时 不卡死
-		{
-			break;
-		}
-		vTaskDelay(1);						//释放CPU防止其他任务饿死
-	}
-	
-	uint16_t crc_re=CRC_16_MODBUS(rx,count-2,1);
-	if(count==9 && rx[0]==0x01 && rx[1]==0x03 && rx[2]==0x04 && rx[7]==(crc_re& 0xff) && rx[8]==((crc_re>>8)& 0xff))
-	{
-		uint16_t t=(rx[3]<<8)|rx[4];
-		uint16_t s=(rx[5]<<8)|rx[6];
-		*temp=t/10.0;
-		*shi=s/10.0;
-		return 1;
-	}
-	return 0;
+    uint8_t tx[8];
+    uint8_t rx[20];
+    uint8_t count = 0;
+    uint16_t crc = 0;
+
+    /* 问询帧 */
+    tx[0] = 0x01;
+    tx[1] = 0x03;
+    tx[2] = 0x00;
+    tx[3] = 0x01;
+    tx[4] = 0x00;
+    tx[5] = 0x02;
+
+    /* 小端排序 低字节在前 */
+    crc = CRC_16_MODBUS(tx, 6, 0);
+    tx[6] = crc & 0xff;
+    tx[7] = (crc >> 8) & 0xff;
+
+    memset(rx, 0, sizeof(rx));
+
+    /* 清除 UART 错误标志和残留数据 */
+    __HAL_UART_CLEAR_OREFLAG(&huart2);
+    volatile uint32_t tmp = huart2.Instance->DR;
+    (void)tmp;
+
+    RS485_TX;
+    if (HAL_UART_Transmit(&huart2, tx, sizeof(tx), 1000) != HAL_OK)
+    {
+        RS485_RX;
+        return 0;
+    }
+    RS485_RX;  // 发送完立即切换接收
+
+    uint32_t start_time = HAL_GetTick();
+    uint32_t up_time = HAL_GetTick();
+
+    while (1)
+    {
+        if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE))
+        {
+            uint8_t ch = (uint8_t)(huart2.Instance->DR & 0xff);
+            if (count < sizeof(rx))
+            {
+                rx[count++] = ch;
+                up_time = HAL_GetTick();
+            }
+        }
+        if (count > 0 && (HAL_GetTick() - up_time) > 50) break;  // 帧间隔
+        if (HAL_GetTick() - start_time > 800) break;              // 绝对超时
+        taskYIELD();
+    }
+
+    if (count < 4) return 0;  // 长度安全检查
+
+    uint16_t crc_re = CRC_16_MODBUS(rx, count - 2, 1);
+    if (count == 9 && rx[0] == 0x01 && rx[1] == 0x03 && rx[2] == 0x04 &&
+        rx[7] == (crc_re & 0xff) && rx[8] == ((crc_re >> 8) & 0xff))
+    {
+        uint16_t t = (rx[3] << 8) | rx[4];
+        uint16_t s = (rx[5] << 8) | rx[6];
+        *temp = t / 10.0f;
+        *shi = s / 10.0f;
+        return 1;
+    }
+    return 0;
 }

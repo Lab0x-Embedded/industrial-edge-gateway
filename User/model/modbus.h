@@ -1,45 +1,43 @@
 #ifndef MODBUS_H
 #define MODBUS_H
+
 #include "stdint.h"
 #include "stm32f4xx.h"
 
+/* RS485 方向控制：PG6，高电平发送，低电平接收 */
 #define RS485_TX  HAL_GPIO_WritePin(GPIOG, GPIO_PIN_6, GPIO_PIN_SET)
 #define RS485_RX  HAL_GPIO_WritePin(GPIOG, GPIO_PIN_6, GPIO_PIN_RESET)
 
+/* CRC16-MODBUS 计算，flag=1 按位循环法，flag=0 查表法 */
+uint16_t CRC_16_MODBUS(uint8_t *data, uint8_t len, uint8_t flag);
 
-int Modbus_Get_Temp(float *temp,float *shi);
-
-uint16_t CRC_16_MODBUS(uint8_t *data,uint8_t len,uint8_t flag);
-
-
-
-
-
-
-//单从机配置结构体
+/* 单从机配置结构体 */
 typedef struct
 {
-    uint8_t  dev_addr;    //从机地址
-    uint8_t  func;       //功能码
-    uint16_t reg_start;  //起始寄存器
-    uint16_t reg_num;    //寄存器个数
-    uint16_t err_cnt;    //连续失败次数
-    float    val1;       //数据1
-    float    val2;       //数据2
-    uint8_t  valid;      //自上电以来至少成功读到过一次
-}ModDev_t;
+    uint8_t  dev_addr;    // 从机地址
+    uint8_t  func;        // 功能码
+    uint16_t reg_start;   // 起始寄存器
+    uint16_t reg_num;     // 寄存器个数
+    uint16_t err_cnt;     // 连续失败次数
+    float    val1;        // 数据1
+    float    val2;        // 数据2
+    uint8_t  valid;       // 自上电以来至少成功读到过一次
+} ModDev_t;
 
 extern ModDev_t dev_list[];
-extern uint8_t dev_cnt;
+extern uint8_t  dev_cnt;
 
-//通用读寄存器接口（替换原来固定地址Modbus_Get_Temp）
-uint8_t Modbus_Read_Dev(uint8_t addr,uint8_t func,uint16_t reg,uint16_t regcnt,uint16_t *buf);
+/* 通用读寄存器接口 */
+uint8_t Modbus_Read_Dev(uint8_t addr, uint8_t func, uint16_t reg, uint16_t regcnt, uint16_t *buf);
 
-//整表轮询入口
+/* 整表轮询入口 */
 void Modbus_Poll_AllDev(void);
 
+/* 数据入队与 MQTT 上报 */
 void Modbus_Upload_Json(void);
-
 void MQTT_SendAllDev_NoWait(void);
 
-#endif
+/* 兼容旧接口（建议废弃，改用 Modbus_Read_Dev） */
+int Modbus_Get_Temp(float *temp, float *shi);
+
+#endif /* MODBUS_H */

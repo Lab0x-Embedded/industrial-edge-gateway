@@ -12,8 +12,8 @@
  *  云端/连接配置 —— 唯一真值源（改这里，别动 pal.c）
  * ============================================================ */
 /* WiFi */
-#define WIFI_SSID  "YQ-shixun5"
-#define WIFI_PASS  "88888888"
+#define WIFI_SSID  "Magic7"
+#define WIFI_PASS  "121qweqwe"
 
 /* 云平台选择：CLOUD_E2 / CLOUD_ONENET
  * 也可以构建时覆盖：-DCLOUD_TARGET=CLOUD_ONENET */

@@ -9,14 +9,35 @@
  *              数据源：随机缓变的模拟值
  *
  * 与 tools/modbus_sim.py 同一套寄存器语义；光照每秒缓变，DHT11 每 2s 采样。
- * 收到合法 03 问询才应答，PE3(LED0) 每次应答翻转一次作为活动指示。
+ * 收到合法 03 问询才应答，LED0 每次应答翻转一次作为活动指示。
  */
+
 #include "stm32f4xx_hal.h"
 #include <stdlib.h>
 
-#define RS485_TX()  HAL_GPIO_WritePin(GPIOG, GPIO_PIN_6, GPIO_PIN_SET)
-#define RS485_RX()  HAL_GPIO_WritePin(GPIOG, GPIO_PIN_6, GPIO_PIN_RESET)
-#define LED0_TGL()  HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_3)
+/* ================================================================
+ *                     引脚配置区（按实际硬件修改）
+ * ================================================================ */
+
+/* RS485 收发方向控制：与主站保持一致，用 PG6 */
+#define RS485_GPIO_PORT     GPIOG
+#define RS485_GPIO_PIN      GPIO_PIN_6
+#define RS485_TX()          HAL_GPIO_WritePin(RS485_GPIO_PORT, RS485_GPIO_PIN, GPIO_PIN_SET)
+#define RS485_RX()          HAL_GPIO_WritePin(RS485_GPIO_PORT, RS485_GPIO_PIN, GPIO_PIN_RESET)
+
+/* 活动指示灯 LED0：与 MX_GPIO_Init 中初始化的 PE3 一致 */
+#define LED0_GPIO_PORT      GPIOE
+#define LED0_GPIO_PIN       GPIO_PIN_3
+#define LED0_TGL()          HAL_GPIO_TogglePin(LED0_GPIO_PORT, LED0_GPIO_PIN)
+
+/* DHT11 单总线数据引脚：按注释使用 PA15 */
+#define DHT_GPIO_PORT       GPIOA
+#define DHT_GPIO_PIN        GPIO_PIN_15
+
+/* DHT11 微秒延时使用的 CPU 周期数（168MHz HCLK） */
+#define DHT_CYC_PER_US      168
+
+/* ================================================================ */
 
 static UART_HandleTypeDef huart2;
 
@@ -27,15 +48,10 @@ static uint32_t light_raw32 = 12345000; /* 12345 lx × 1000 */
 static uint16_t reg01[2];               /* 0x0001..0x0002 */
 static uint16_t reg02[2];               /* 0x0002..0x0003 */
 
-/* ================= DHT11（单总线，DATA=PA15） =================
- * PA15 复位后默认是 JTAG TDI（AF0），配置成 GPIO 后自动脱离，SWD 烧录不受影响。 */
-#define DHT_GPIO        GPIOA
-#define DHT_PIN         GPIO_PIN_15
-#define DHT_CYC_PER_US  168     /* 168MHz HCLK */
-
 void Error_Handler(void);
 void SysTick_Handler(void) { HAL_IncTick(); }
 
+/* ================= DHT11（单总线） ================= */
 static void DHT_DelayInit(void)         /* 用 DWT 周期计数器做微秒延时 */
 {
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
@@ -52,18 +68,18 @@ static void DHT_DelayUs(uint32_t us)
 static void DHT_SetDir(uint32_t mode)
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
-    GPIO_InitStruct.Pin = DHT_PIN;
+    GPIO_InitStruct.Pin = DHT_GPIO_PIN;
     GPIO_InitStruct.Mode = mode;
     GPIO_InitStruct.Pull = GPIO_PULLUP;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(DHT_GPIO, &GPIO_InitStruct);
+    HAL_GPIO_Init(DHT_GPIO_PORT, &GPIO_InitStruct);
 }
 
 /* 等待数据线变为 st 电平，返回等待的微秒数；超时返回 -1 */
 static int32_t DHT_Wait(GPIO_PinState st, uint32_t timeout_us)
 {
     uint32_t start = DWT->CYCCNT;
-    while (HAL_GPIO_ReadPin(DHT_GPIO, DHT_PIN) != st)
+    while (HAL_GPIO_ReadPin(DHT_GPIO_PORT, DHT_GPIO_PIN) != st)
         if (DWT->CYCCNT - start > timeout_us * DHT_CYC_PER_US) return -1;
     return (int32_t)((DWT->CYCCNT - start) / DHT_CYC_PER_US);
 }
@@ -75,9 +91,9 @@ static int DHT_Read(void)
 
     /* 主机起始信号：拉低 ≥18ms，释放 30µs */
     DHT_SetDir(GPIO_MODE_OUTPUT_PP);
-    HAL_GPIO_WritePin(DHT_GPIO, DHT_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(DHT_GPIO_PORT, DHT_GPIO_PIN, GPIO_PIN_RESET);
     HAL_Delay(20);
-    HAL_GPIO_WritePin(DHT_GPIO, DHT_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(DHT_GPIO_PORT, DHT_GPIO_PIN, GPIO_PIN_SET);
     DHT_SetDir(GPIO_MODE_INPUT);
     DHT_DelayUs(30);
 
@@ -133,21 +149,25 @@ static void MX_GPIO_Init(void)
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
 
+    /* 使能用到的 GPIO 端口时钟 */
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOE_CLK_ENABLE();
     __HAL_RCC_GPIOG_CLK_ENABLE();
 
-    HAL_GPIO_WritePin(GPIOG, GPIO_PIN_6, GPIO_PIN_RESET);   /* DE 默认接收 */
-    HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);
-
-    GPIO_InitStruct.Pin = GPIO_PIN_6;
+    /* RS485 方向控制：默认接收 */
+    HAL_GPIO_WritePin(RS485_GPIO_PORT, RS485_GPIO_PIN, GPIO_PIN_RESET);
+    GPIO_InitStruct.Pin = RS485_GPIO_PIN;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
+    HAL_GPIO_Init(RS485_GPIO_PORT, &GPIO_InitStruct);
 
-    GPIO_InitStruct.Pin = GPIO_PIN_3;
-    HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+    /* LED0 输出 */
+    HAL_GPIO_WritePin(LED0_GPIO_PORT, LED0_GPIO_PIN, GPIO_PIN_RESET);
+    GPIO_InitStruct.Pin = LED0_GPIO_PIN;
+    HAL_GPIO_Init(LED0_GPIO_PORT, &GPIO_InitStruct);
+
+    /* 注意：DHT11 的 GPIO 方向在 DHT_SetDir() 中动态切换，此处无需初始化 */
 }
 
 static void MX_USART2_UART_Init(void)
@@ -201,6 +221,7 @@ static void sensors_drift(void)
 
     light_raw32 += (rand() % 300001) - 150000;
     if (light_raw32 > 20000000UL) light_raw32 = 20000000UL;
+    if (light_raw32 < 1000UL)     light_raw32 = 1000UL;   /* 防止下溢跳变 */
 }
 
 static void dht_poll(void)
