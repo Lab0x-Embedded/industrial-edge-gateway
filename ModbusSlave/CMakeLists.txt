@@ -26,6 +26,7 @@ enable_language(C ASM)
 
 set(HAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../Drivers/STM32F4xx_HAL_Driver)
 set(CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../Core)
+set(SLAVE_HAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/hal)
 
 add_executable(modbus_slave
     modbus_slave_main.c
@@ -48,14 +49,21 @@ add_executable(modbus_slave
     ${HAL_DIR}/Src/stm32f4xx_hal_rcc.c
     ${HAL_DIR}/Src/stm32f4xx_hal_rcc_ex.c
     ${HAL_DIR}/Src/stm32f4xx_hal_uart.c
+
+    # slave hal
+    ${SLAVE_HAL_DIR}/stm32f4xx_hal_adc_ex.c
+    ${SLAVE_HAL_DIR}/stm32f4xx_hal_adc.c
 )
 
+# 本地 hal_conf（含 ADC 开关）的 Inc 必须排在 Core/Inc 之前才能生效
 target_include_directories(modbus_slave PRIVATE
+    ${SLAVE_HAL_DIR}/Inc
     ${CORE_DIR}/Inc
     ${HAL_DIR}/Inc
     ${HAL_DIR}/Inc/Legacy
     ${CMAKE_CURRENT_SOURCE_DIR}/../Drivers/CMSIS/Device/ST/STM32F4xx/Include
     ${CMAKE_CURRENT_SOURCE_DIR}/../Drivers/CMSIS/Include
+    ${SLAVE_HAL_DIR}/Inc
 )
 
 target_compile_definitions(modbus_slave PRIVATE
