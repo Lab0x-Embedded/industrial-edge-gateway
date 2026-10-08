@@ -2,6 +2,9 @@
 #include "w25qxx.h"
 #include "spi.h"
 
+/* W25Q 全局互斥锁（在 freertos.c 里创建） */
+SemaphoreHandle_t flash_mutex = NULL;
+
 static __IO uint32_t  SPITimeout = SPIT_LONG_TIMEOUT;   
 static uint16_t SPI_TIMEOUT_UserCallback(uint8_t errorCode);
 

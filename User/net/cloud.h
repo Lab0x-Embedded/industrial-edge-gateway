@@ -52,6 +52,9 @@
 #define ONENET_TOKEN      "version=2018-10-31&res=products%2FWW0f6843I6%2Fdevices%2Fhumi_temp&et=1822724100&method=sha1&sign=PtFUppXWHY6iMg%2BEMqieAJyGZLo%3D"
 #endif
 
+/* 调试串口输出（UART5 PC12/PD2 115200），关键事件用 */
+void dbg_print(const char *s);
+
 /* 透传模式下从 ESP8266 接收原始 TCP 数据 */
 int esp_recv_raw(int sock, uint8_t *buf, int len, int timeout_ms);
 

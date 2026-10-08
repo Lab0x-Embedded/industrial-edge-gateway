@@ -1,7 +1,7 @@
 #include "cloud.h"
 #include "esp_uart.h"
 #include "esp_at.h"
-#include "storage.h"
+#include "log.h"
 #include "task.h"
 #include "usart.h"
 #include <stdio.h>
@@ -11,6 +11,11 @@
 #include "tasks.h"
 
 extern uint8_t a[256];
+
+/* 调试串口（UART5）：只打关键事件，不逐条刷发布 */
+void dbg_print(const char *s) {
+  HAL_UART_Transmit(&huart5, (uint8_t *)s, strlen(s), 100);
+}
 
 volatile uint8_t wifi_connected =
     0; /* ESP8266 已连上 AP（CWJAP 成功），UI 状态栏据此显示 */

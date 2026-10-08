@@ -1,5 +1,6 @@
 #include "lvgl.h"
-#include "storage.h" 
+#include "log.h"
+#include "tasks.h" 
 #include "stdio.h"
 #include "stm32f4xx.h"
 #include "w25qxx.h"

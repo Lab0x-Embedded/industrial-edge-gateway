@@ -23,7 +23,8 @@
 #include "cloud.h"
 #include "tasks.h"
 #include "w25qxx.h"
-#include "storage.h"
+#include "log.h"
+#include "cache.h"
 
 
 // 空闲熄屏相关

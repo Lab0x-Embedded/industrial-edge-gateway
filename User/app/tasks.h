@@ -10,7 +10,8 @@ void AT();
 void UI();
 void Modbus();
 void page_log_refresh(void);
-extern volatile uint8_t wifi_connected;   // ESP8266 已连上 AP（pal.c 维护）
+extern volatile uint8_t wifi_connected;   // ESP8266 已连上 AP（cloud.c 维护）
+extern volatile uint8_t g_mqtt_connected; // 云端 MQTT 在线（tasks.c 维护）
 
 // 温湿度数据结构体
 

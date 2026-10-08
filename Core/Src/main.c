@@ -35,7 +35,8 @@
 #include "modbus.h"
 #include "esp_uart.h"
 #include "w25qxx.h"
-#include "storage.h"
+#include "log.h"
+#include "cache.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -118,6 +119,7 @@ int main(void)
 
   SPI_FLASH_Init();                          /* W25Q128: SPI1 + CS(PG8) */
   HAL_TIM_Base_Start_IT(&htim3);             /* TIM3 1ms: LVGL 心跳 */
+  Log_Init();
   FlashCache_Init();                         /* 定位补传缓存写地址 */
   RS485_RX;                                  /* 485 默认接收 */
   HAL_UARTEx_ReceiveToIdle_DMA(&huart4, a, sizeof(a));   /* ESP8266 DMA 空闲接收 */

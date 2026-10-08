@@ -66,8 +66,6 @@ void SPI_FLASH_PageWrite(uint8_t* pBuffer, uint32_t WriteAddr, uint16_t NumByteT
 void SPI_FLASH_BufferWrite(uint8_t* pBuffer, uint32_t WriteAddr, uint16_t NumByteToWrite);
 void SPI_FLASH_BufferRead(uint8_t* pBuffer, uint32_t ReadAddr, uint16_t NumByteToRead);
 uint32_t SPI_FLASH_ReadID(void);
-uint8_t  SPI_FLASH_ReadSR(void);   /* 读状态寄存器：bit2/3/4=BP0/1/2 块保护，非 0 会导致擦写静默失败 */
-void     SPI_FLASH_WriteSR(uint8_t sr);  /* 写状态寄存器：传 0 清除块保护 */
 uint32_t SPI_FL_ReadDeviceID(void);
 void SPI_FLASH_StartReadSequence(uint32_t ReadAddr);
 void SPI_Flash_PowerDown(void);
@@ -77,5 +75,12 @@ uint8_t SPI_FLASH_SendByte(uint8_t byte);
 uint16_t SPI_FLASH_SendHalfWord(uint16_t HalfWord);
 void SPI_FLASH_WriteEnable(void);
 void SPI_FLASH_WaitForWriteEnd(void);
+uint8_t  SPI_FLASH_ReadSR(void);    /* 状态寄存器：bit2/3/4=BP 块保护，非 0 擦写静默失败 */
+void     SPI_FLASH_WriteSR(uint8_t sr);
+
+/* W25Q 全局互斥锁：日志/缓存/触摸校准共用同一颗芯片，跨任务访问都须经它 */
+#include "FreeRTOS.h"
+#include "semphr.h"
+extern SemaphoreHandle_t flash_mutex;
 
 #endif
