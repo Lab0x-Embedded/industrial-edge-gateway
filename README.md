@@ -67,8 +67,8 @@ arm-none-eabi-objcopy -O binary build/industrial-edge-gateway.elf build/industri
 ## 已知注意点
 
 - **RTC 用 LSI**（板上 LSE 32.768K 未确认焊接）；日志时间戳有漂移。要换 LSE：CubeMX → RTC → 时钟源选 LSE，重新生成。
-- **触摸映射为出厂粗校准**（线性 200~3900 → 320×240）。若边缘偏差大，改 `User/code/touch.c` 里 `TP_Get_Calibrated` 的映射系数。
+- **触摸映射为出厂粗校准**（线性 200~3900 → 320×240）。若边缘偏差大，改 `User/bsp/touch.c` 里 `TP_Get_Calibrated` 的映射系数。
 - **W25Q128 分区表**沿用原 W25Q64 布局（用满 8MB），无冲突；JEDEC ID 0xEF4018。
 - ESP8266 需为标准 AT 固件（厂家资料包有刷机教程与固件）。
-- FreeRTOS heap 15KB、LVGL 缓冲 320×30 行，F407 资源富余；如加界面元素可在 `User/Lvgl/lv_conf.h` 调 `LV_MEM_SIZE`。
+- FreeRTOS heap 15KB、LVGL 缓冲 320×30 行，F407 资源富余；如加界面元素可在 `User/gui/lv_conf.h` 调 `LV_MEM_SIZE`。
 - 息屏逻辑：10 秒无触摸/数据 → 背光灭（PF10 拉低）；有数据或 MQTT 状态变化自动亮屏。

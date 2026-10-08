@@ -25,10 +25,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "Taskhandel.h"
+#include "tasks.h"
 #include "queue.h"
 #include "semphr.h"
-/* 这些全局定义在 Taskhandel.c */
+/* 这些全局定义在 tasks.c */
 extern TickType_t idle_tick;
 extern TickType_t power_tick;
 extern uint8_t    lcd_bl_en;

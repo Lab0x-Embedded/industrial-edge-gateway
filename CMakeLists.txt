@@ -52,13 +52,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    User/code
-    User/ESP8266
-    User/model
-    User/SPI_Flash
-    User/Lvgl
-    User/Lvgl/LVGL_myGUI
-    User/Lvgl/porting
+    User/app
+    User/bsp
+    User/modbus
+    User/net
+    User/storage
+    User/gui
+    User/gui/ui
+    User/gui/porting
 )
 
 # Add project symbols (macros)
