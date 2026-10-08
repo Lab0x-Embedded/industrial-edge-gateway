@@ -3,3 +3,7 @@ mx.scratch
 !.settings
 # macOS Finder
 .DS_Store
+
+.settings
+cmake
+CMakePresets.json
