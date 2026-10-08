@@ -8,3 +8,4 @@ mx.scratch
 cmake
 CMakePresets.json
 .vscode
+.mxproject
