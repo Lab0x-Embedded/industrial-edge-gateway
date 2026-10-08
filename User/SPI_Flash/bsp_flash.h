@@ -66,6 +66,8 @@ void SPI_FLASH_PageWrite(uint8_t* pBuffer, uint32_t WriteAddr, uint16_t NumByteT
 void SPI_FLASH_BufferWrite(uint8_t* pBuffer, uint32_t WriteAddr, uint16_t NumByteToWrite);
 void SPI_FLASH_BufferRead(uint8_t* pBuffer, uint32_t ReadAddr, uint16_t NumByteToRead);
 uint32_t SPI_FLASH_ReadID(void);
+uint8_t  SPI_FLASH_ReadSR(void);   /* 读状态寄存器：bit2/3/4=BP0/1/2 块保护，非 0 会导致擦写静默失败 */
+void     SPI_FLASH_WriteSR(uint8_t sr);  /* 写状态寄存器：传 0 清除块保护 */
 uint32_t SPI_FL_ReadDeviceID(void);
 void SPI_FLASH_StartReadSequence(uint32_t ReadAddr);
 void SPI_Flash_PowerDown(void);

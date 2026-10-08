@@ -108,10 +108,8 @@ void Log_Write(Log_Level level, const char *str)
         str_len = LOG_CONTENT_LEN - 1U;
     memcpy(log_buf.content, str, str_len);				//拷贝函数的最后一个参数表示 要拷贝的字节数
 
-    /* 同步镜像到调试串口（UART5），与日志页内容一致 */
-    pal_dbg("[LOG] ");
-    pal_dbg(str);
-    pal_dbg("\r\n");
+
+    if (flash_mutex) xSemaphoreTake(flash_mutex, portMAX_DELAY);
 
     // 2. 日志区循环判断：写满则回到日志区头部
     if((log_write_offset + LOG_OBJ_SIZE) > LOG_PART_SIZE)
@@ -134,6 +132,8 @@ void Log_Write(Log_Level level, const char *str)
     Flash_Part_Write(LOG_PART_ADDR, log_write_offset, (uint8_t *)&log_buf, LOG_OBJ_SIZE);
     // 4. 偏移自增
     log_write_offset += LOG_OBJ_SIZE;
+
+    if (flash_mutex) xSemaphoreGive(flash_mutex);
 }
 
 
@@ -147,7 +147,9 @@ uint8_t Log_ReadOne(uint32_t log_offset, Log_Obj *log_obj)
 {
     if(log_obj == NULL) return 1;
 
+    if (flash_mutex) xSemaphoreTake(flash_mutex, portMAX_DELAY);
     Flash_Part_Read(LOG_PART_ADDR, log_offset, (uint8_t *)log_obj, LOG_OBJ_SIZE);
+    if (flash_mutex) xSemaphoreGive(flash_mutex);
 
     // 魔数不匹配 = 无效日志
     if(log_obj->magic != LOG_MAGIC)

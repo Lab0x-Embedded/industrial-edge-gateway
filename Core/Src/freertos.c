@@ -35,6 +35,7 @@ extern uint8_t    lcd_bl_en;
 extern QueueHandle_t data_queue;
 extern QueueHandle_t lvgl_data_queue;
 extern SemaphoreHandle_t uart1_mutex;
+extern SemaphoreHandle_t flash_mutex;   /* flash.c 定义，保护 SPI Flash 跨任务访问 */
 #include "lvgl.h"
 /* USER CODE END Includes */
 
@@ -95,6 +96,7 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_MUTEX */
   uart1_mutex = xSemaphoreCreateMutex();
+  flash_mutex = xSemaphoreCreateMutex();
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */

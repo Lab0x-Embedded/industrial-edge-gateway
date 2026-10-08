@@ -22,6 +22,12 @@ void SPI_FLASH_Init(void)
 
     // 2. 使能 SPI2 外设（关键！）
     __HAL_SPI_ENABLE(&hspi1);
+
+    // 3. 自愈：清除状态寄存器里的块保护位（BP0/1/2），否则日志/缓存区擦写静默失败
+    if (SPI_FLASH_ReadSR() & 0x1C)
+    {
+        SPI_FLASH_WriteSR(0x00);
+    }
 }
 
 /*4KB 扇区擦除*/
@@ -268,21 +274,45 @@ void SPI_FLASH_WriteEnable(void)
   SPI_FLASH_CS_HIGH();
 }
 
+uint8_t SPI_FLASH_ReadSR(void)
+{
+  uint8_t sr;
+  SPI_FLASH_CS_LOW();
+  SPI_FLASH_SendByte(W25X_ReadStatusReg);
+  sr = SPI_FLASH_SendByte(Dummy_Byte);
+  SPI_FLASH_CS_HIGH();
+  return sr;
+}
+
+/* 写状态寄存器：清除 BP0/1/2 块保护位（被保护的扇区擦写会静默失败） */
+void SPI_FLASH_WriteSR(uint8_t sr)
+{
+  SPI_FLASH_WriteEnable();
+  SPI_FLASH_CS_LOW();
+  SPI_FLASH_SendByte(W25X_WriteStatusReg);
+  SPI_FLASH_SendByte(sr);
+  SPI_FLASH_CS_HIGH();
+  SPI_FLASH_WaitForWriteEnd();
+}
+
 void SPI_FLASH_WaitForWriteEnd(void)
 {
   uint8_t FLASH_Status = 0;
+  uint32_t start = HAL_GetTick();
 
   SPI_FLASH_CS_LOW();
   SPI_FLASH_SendByte(W25X_ReadStatusReg);
 
-  SPITimeout = SPIT_FLAG_TIMEOUT;
+  /* W25Q128 扇区擦除最长 400ms：旧实现 ~20ms 就超时，且超时路径不释放 CS，
+   * 片选卡低导致后续 WREN/PageProgram 全部被吞（写入静默失败），是日志/缓存
+   * 写不进去的根因。现改为墙钟 500ms 超时，任何路径退出前都拉高 CS。 */
   do
   {
     FLASH_Status = SPI_FLASH_SendByte(Dummy_Byte);
-    if((SPITimeout--) == 0) 
+    if ((HAL_GetTick() - start) > 500)
     {
       SPI_TIMEOUT_UserCallback(4);
-      return;
+      break;
     }
   } while ((FLASH_Status & WIP_Flag) == SET);
 
