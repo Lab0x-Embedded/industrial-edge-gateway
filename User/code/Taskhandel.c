@@ -140,7 +140,8 @@ xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
                 char json[128];
                 pal_mqtt_build_payload(json, sizeof(json), &data_q);   /* payload 格式随 CLOUD_TARGET */
 							HAL_GPIO_WritePin(GPIOE,GPIO_PIN_4,GPIO_PIN_RESET);
-                FlashCache_Write(json, strlen(json));
+if (data_q.valid != 0)   /* 无效数据不进断网缓存，避免重连后补传全 0 */
+                    FlashCache_Write(json, strlen(json));
             }
 						
            
