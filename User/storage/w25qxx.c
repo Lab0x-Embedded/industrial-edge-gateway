@@ -1,5 +1,5 @@
 #include "stm32f4xx.h"
-#include "bsp_flash.h"
+#include "w25qxx.h"
 #include "spi.h"
 
 static __IO uint32_t  SPITimeout = SPIT_LONG_TIMEOUT;   

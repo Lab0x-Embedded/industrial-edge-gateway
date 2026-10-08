@@ -3,7 +3,7 @@
  * TP_Get_Calibrated 为 LVGL indev 的对接接口（原仓库缺失，此处补全）。
  */
 #include "touch.h"
-#include "bsp_flash.h"
+#include "w25qxx.h"
 #include "FreeRTOS.h"
 #include "task.h"
 

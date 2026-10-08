@@ -1,6 +1,6 @@
-#include "flash.h"
-#include "bsp_flash.h"
-#include "pal.h"
+#include "storage.h"
+#include "w25qxx.h"
+#include "cloud.h"
 #include <string.h>
 #include <stdio.h>
 #include "stm32f4xx.h"
@@ -332,7 +332,7 @@ int MQTT_PublishJson(const char *json)
 {
     /* 组包/选 topic/QoS 由云平台 profile 层（pal.c）统一处理；
      * QoS1 平台以收到 PUBACK 为成功，失败返回 -1（调用方不标记已发，下轮重试） */
-    int ret = pal_mqtt_publish(json);
+    int ret = cloud_publish(json);
     vTaskDelay(500);
     return ret;
 }

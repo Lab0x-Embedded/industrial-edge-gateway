@@ -1,7 +1,7 @@
-#include "pal.h"
-#include "command.h"
+#include "cloud.h"
+#include "esp_uart.h"
 #include "esp_at.h"
-#include "flash.h"
+#include "storage.h"
 #include "task.h"
 #include "usart.h"
 #include <stdio.h>
@@ -72,7 +72,7 @@ static const CloudProfile profiles[] = {
 };
 
 /* payload 格式按平台出（键名/信封不同），业务层只给 Data_t */
-void pal_mqtt_build_payload(char *out, size_t n, const Data_t *d) {
+void cloud_build_payload(char *out, size_t n, const Data_t *d) {
 #if CLOUD_TARGET == CLOUD_E2
   /* E2 数据点格式：datapoints[{metric,value}]，metric 需与平台定义一致；
    * 只上报有效字段（valid 掩码），全 0 假数据不上云 */
@@ -207,7 +207,7 @@ static int mqtt_send_subscribe(void) {
  * 只有这一步通过才允许置在线。 */
 static int mqtt_wait_connack(void) {
   uint8_t connack[4];
-  int ret = pal_tcp_recv_raw(0, connack, 4, 3000);
+  int ret = esp_recv_raw(0, connack, 4, 3000);
   return (ret == 4 && connack[0] == 0x20 && connack[1] == 0x02 &&
           connack[3] == 0x00);
 }
@@ -315,7 +315,7 @@ static void mqtt_drain_downlink(void) {
   char pl[96];
   size_t plen = 0;
 
-  if (pal_tcp_recv_raw(0, &hdr, 1, 600) != 1)
+  if (esp_recv_raw(0, &hdr, 1, 600) != 1)
     return; /* 超时=本次没有下行 */
   if ((hdr >> 4) != 0x3)
     return; /* 不是 PUBLISH，丢弃该字节 */
@@ -325,7 +325,7 @@ static void mqtt_drain_downlink(void) {
   int mult = 1;
   for (int i = 0; i < 4; i++) {
     uint8_t b;
-    if (pal_tcp_recv_raw(0, &b, 1, 500) != 1)
+    if (esp_recv_raw(0, &b, 1, 500) != 1)
       return;
     rem += (uint32_t)(b & 0x7F) * mult;
     mult *= 128;
@@ -338,11 +338,11 @@ static void mqtt_drain_downlink(void) {
   if (rem < 2 || rem > sizeof body) {
     for (uint32_t i = 0; i < rem; i++) {
       uint8_t t;
-      pal_tcp_recv_raw(0, &t, 1, 10);
+      esp_recv_raw(0, &t, 1, 10);
     }
     return;
   }
-  if (pal_tcp_recv_raw(0, body, rem, 500) != (int)rem)
+  if (esp_recv_raw(0, body, rem, 500) != (int)rem)
     return;
 
   uint16_t tlen = ((uint16_t)body[0] << 8) | body[1];
@@ -364,7 +364,7 @@ static void mqtt_drain_downlink(void) {
 
 /* 统一发布入口：PUBLISH 到 profile 的 topic_pub；
  * QoS1 平台（E2/OneNET）等 PUBACK，收到才返回 0。 */
-int pal_mqtt_publish(const char *payload) {
+int cloud_publish(const char *payload) {
   const CloudProfile *p = &profiles[CLOUD_TARGET];
   uint8_t pkt[512];
   uint8_t *w = pkt;
@@ -398,7 +398,7 @@ int pal_mqtt_publish(const char *payload) {
 
   if (p->qos1) {
     uint8_t ack[4];
-    if (pal_tcp_recv_raw(0, ack, 4, 2000) != 4 || ack[0] != 0x40) {
+    if (esp_recv_raw(0, ack, 4, 2000) != 4 || ack[0] != 0x40) {
       return -1; /* 未收到 PUBACK */
     }
     mqtt_drain_downlink(); /* 平台回执（code）进日志页，同时保持字节流对齐 */
@@ -415,7 +415,7 @@ int pal_mqtt_publish(const char *payload) {
  * @return 实际接收到的字节数，超时或失败返回 -1
  */
 
-int pal_tcp_recv_raw(int sock, uint8_t *buf, int len, int timeout_ms) {
+int esp_recv_raw(int sock, uint8_t *buf, int len, int timeout_ms) {
   uint32_t start = HAL_GetTick();
   int received = 0;
   while (received < len) {

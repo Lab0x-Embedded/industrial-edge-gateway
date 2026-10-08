@@ -33,14 +33,14 @@
 #include "lcd.h"
 #include "touch.h"
 #include "modbus.h"
-#include "command.h"
-#include "bsp_flash.h"
-#include "flash.h"
+#include "esp_uart.h"
+#include "w25qxx.h"
+#include "storage.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 #include "lvgl.h"
-#include "command.h"
+#include "esp_uart.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

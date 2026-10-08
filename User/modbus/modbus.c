@@ -6,9 +6,9 @@
 #include "stm32f4xx_hal_def.h"
 #include "FreeRTOS.h"
 #include "task.h"
-#include "flash.h"
+#include "storage.h"
 #include "tasks.h"
-#include "pal.h"
+#include "cloud.h"
 
 /* ================================================================
  *	查表法
@@ -283,8 +283,8 @@ void MQTT_SendAllDev_NoWait(void)
     if (UIdat.valid == 0)
         return;   /* 两台设备一次都没读到过：不上报全 0 假数据 */
 
-    pal_mqtt_build_payload(payload, sizeof(payload), &UIdat);
-    pal_mqtt_publish(payload);                     /* 云端上报（topic/QoS/格式由 profile 决定） */
+    cloud_build_payload(payload, sizeof(payload), &UIdat);
+    cloud_publish(payload);                     /* 云端上报（topic/QoS/格式由 profile 决定） */
     vTaskDelay(10);
 }
 

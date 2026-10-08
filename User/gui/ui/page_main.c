@@ -1,8 +1,8 @@
 #include "lvgl.h"
-#include "flash.h" 
+#include "storage.h" 
 #include "stdio.h"
 #include "stm32f4xx.h"
-#include "bsp_flash.h"
+#include "w25qxx.h"
 
 // 字体声明
 extern lv_font_t font_chinese_9;

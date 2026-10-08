@@ -53,7 +53,7 @@
 #endif
 
 /* 透传模式下从 ESP8266 接收原始 TCP 数据 */
-int pal_tcp_recv_raw(int sock, uint8_t *buf, int len, int timeout_ms);
+int esp_recv_raw(int sock, uint8_t *buf, int len, int timeout_ms);
 
 
 void MQTT_Init(void);
@@ -62,7 +62,7 @@ void MQTT_SendPing(void);
 
 /* 统一云端发布接口：topic/QoS/payload 格式由 CLOUD_TARGET 的 profile 决定。
  * QoS1 平台（E2/OneNET）以收到 PUBACK 为成功依据，返回 0=成功。 */
-void pal_mqtt_build_payload(char *out, size_t n, const Data_t *d);
-int  pal_mqtt_publish(const char *payload);
+void cloud_build_payload(char *out, size_t n, const Data_t *d);
+int  cloud_publish(const char *payload);
 
 #endif

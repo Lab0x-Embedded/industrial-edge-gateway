@@ -1,4 +1,4 @@
-#include "command.h"
+#include "esp_uart.h"
 #include "usart.h"
 #include "stm32f4xx.h"
 #include "dma.h"
@@ -11,10 +11,9 @@
 #include "lv_port_indev.h"       
 #include "page_main.h"
 #include "modbus.h"
-#include "command.h"
+#include "esp_uart.h"
 #include "ESP_at.h"
-#include "libemqtt.h"
-#include "pal.h"
+#include "cloud.h"
 #include "tasks.h"
 #include "cmsis_os2.h"
 

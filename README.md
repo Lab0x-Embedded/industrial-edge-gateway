@@ -21,7 +21,7 @@
 Core/                  CubeMX 生成（时钟168M、FSMC、UART4+DMA、USART2、SPI1、TIM3、RTC、IWDG、FreeRTOS）
 User/
   code/                应用任务 + LCD/触摸驱动（FSMC 并口版，含补全的 LCD_WritePixels / TP_Get_Calibrated）
-  ESP8266/             AT 指令 + MQTT（libemqtt），串口已改 huart4(PA0/PA1) + DMA1 S2/S4
+  ESP8266/             AT 指令 + MQTT（(已删除)），串口已改 huart4(PA0/PA1) + DMA1 S2/S4
   model/               Modbus RTU 主站（USART2 PA2/PA3，方向脚 PG6）
   SPI_Flash/           W25Q128（SPI1 PB3/4/5，CS=PG8）；日志分区 0~4MB，补传缓存 4~8MB
   Lvgl/                LVGL 8.3 + 界面 + porting（LV_COLOR_16_SWAP=0，并口屏）
@@ -60,7 +60,7 @@ arm-none-eabi-objcopy -O binary build/industrial-edge-gateway.elf build/industri
 
 1. 屏点亮、显示 LVGL 主界面；10 秒无操作息屏，触碰唤醒。
 2. 触摸可点按界面。
-3. 串口1(RS232 座) 115200 看系统日志（flash.c 的调试打印走此口）。
+3. 串口1(RS232 座) 115200 看系统日志（storage.c 的调试打印走此口）。
 4. 接 Modbus 温湿度/光照传感器（RS485 端子），界面数据刷新。
 5. WIFI 座插 ESP8266，MQTT 连上后 LED0 常亮；拔网线测断网缓存、恢复后自动补传（LED2 闪烁）。
 

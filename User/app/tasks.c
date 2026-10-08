@@ -18,13 +18,12 @@
 #include "lv_port_indev.h"      
 #include "page_main.h"
 #include "modbus.h"
-#include "command.h"
+#include "esp_uart.h"
 #include "ESP_at.h"
-#include "libemqtt.h"
-#include "pal.h"
+#include "cloud.h"
 #include "tasks.h"
-#include "bsp_flash.h"
-#include "flash.h"
+#include "w25qxx.h"
+#include "storage.h"
 
 
 // 空闲熄屏相关
@@ -138,7 +137,7 @@ xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
             {
                 // 离线缓存
                 char json[128];
-                pal_mqtt_build_payload(json, sizeof(json), &data_q);   /* payload 格式随 CLOUD_TARGET */
+                cloud_build_payload(json, sizeof(json), &data_q);   /* payload 格式随 CLOUD_TARGET */
 							HAL_GPIO_WritePin(GPIOE,GPIO_PIN_4,GPIO_PIN_RESET);
 if (data_q.valid != 0)   /* 无效数据不进断网缓存，避免重连后补传全 0 */
                     FlashCache_Write(json, strlen(json));
@@ -173,7 +172,7 @@ void AT(void)
             MQTT_SendPing();
 
             uint8_t pong[2];
-					int ret = pal_tcp_recv_raw(0, pong, 2, pdMS_TO_TICKS(1000));			// 等待 PINGRESP（1 秒超时） 读缓冲区应答
+					int ret = esp_recv_raw(0, pong, 2, pdMS_TO_TICKS(1000));			// 等待 PINGRESP（1 秒超时） 读缓冲区应答
 
             if (ret>=2&& pong[0] == 0xD0 && pong[1] == 0x00)
             {
