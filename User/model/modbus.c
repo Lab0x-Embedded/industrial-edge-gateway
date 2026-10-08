@@ -219,6 +219,10 @@ void Modbus_Poll_AllDev(void)
         //发起读取
         if(Modbus_Read_Dev(p->dev_addr,p->func,p->reg_start,p->reg_num,tmp_buf)==1)
         {
+         if(p->err_cnt >= MAX_ERR_CNT)
+             Log_Write(LOG_INFO, p->dev_addr==1 ? "modbus 0x01 back online" : "modbus 0x02 back online");
+         p->err_cnt = 0;
+         p->valid = 1;   //成功读到过：数据才允许上云
          //   p->err_cnt = 0; //成功清零错误计数
             //根据从机地址解析数据
             switch(p->dev_addr)
@@ -246,6 +250,12 @@ void Modbus_Poll_AllDev(void)
 ////             //   Log_Write(LOG_ERROR,"Mod dev%d offline suspend");
 ////            }
 //        }
+        else
+        {
+            p->err_cnt++;
+            if(p->err_cnt == MAX_ERR_CNT)   //连续 5 次失败：日志记一条，RS485 掉线可见
+                Log_Write(LOG_ERROR, p->dev_addr==1 ? "modbus 0x01 offline" : "modbus 0x02 offline");
+        }
         vTaskDelay(pdMS_TO_TICKS(30)); //单从机间隔防总线干扰					重点时间不能过大！！！！！！！
     }
 }
@@ -263,6 +273,8 @@ void Modbus_Upload_Json(void)
     uidata.temp  = dev_list[0].val1;
     uidata.shi   = dev_list[0].val2;
     uidata.light = dev_list[1].val1;
+    uidata.valid = (uint8_t)((dev_list[0].valid ? 0x1 : 0) |
+                             (dev_list[1].valid ? 0x2 : 0));
     xQueueOverwrite(data_queue, &uidata);
     xQueueOverwrite(lvgl_data_queue, &uidata);   /* UI 离线也要刷新，不再依赖云端在线 */
 }
@@ -275,6 +287,11 @@ void MQTT_SendAllDev_NoWait(void)
     UIdat.temp  = dev_list[0].val1;
     UIdat.shi   = dev_list[0].val2;
     UIdat.light = dev_list[1].val1;
+    UIdat.valid = (uint8_t)((dev_list[0].valid ? 0x1 : 0) |
+                            (dev_list[1].valid ? 0x2 : 0));
+
+    if (UIdat.valid == 0)
+        return;   /* 两台设备一次都没读到过：不上报全 0 假数据 */
 
     pal_mqtt_build_payload(payload, sizeof(payload), &UIdat);
     pal_mqtt_publish(payload);                     /* 云端上报（topic/QoS/格式由 profile 决定） */
