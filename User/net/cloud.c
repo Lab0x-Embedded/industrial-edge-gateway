@@ -1,4 +1,6 @@
 #include "cloud.h"
+#include "wifi_conn.h"
+#include "w25qxx.h"
 #include "esp_uart.h"
 #include "esp_at.h"
 #include "log.h"
@@ -23,8 +25,6 @@ void dbg_print(const char *fmt, ...) {
         HAL_UART_Transmit(&huart5, (uint8_t*)buf, n, HAL_MAX_DELAY);
 }
 
-volatile uint8_t wifi_connected =
-    0; /* ESP8266 已连上 AP（CWJAP 成功），UI 状态栏据此显示 */
 
 /* ============================================================
  *  云平台 profile —— 两个平台都是"明文 TCP + 标准 MQTT"，
@@ -237,13 +237,8 @@ void MQTT_Init(void) {
   vTaskDelay(200);
 
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
-  if (ESP_SendCmd("AT+CWJAP=\"" WIFI_SSID "\",\"" WIFI_PASS "\"\r\n",
-                  "WIFI GOT IP", 5000) == ESP_OK) {
-    wifi_connected = 1;
-  } else {
-    wifi_connected = 0;
+  if (!wifi_join())
     Log_Write(LOG_WARN, "wifi join failed");
-  }
   vTaskDelay(500);
 
   snprintf(cmd, sizeof cmd, "AT+CIPSTART=\"TCP\",\"%s\",%u\r\n", p->host,
@@ -284,13 +279,8 @@ void RE_MQTT_Init(void) {
   vTaskDelay(pdMS_TO_TICKS(1000));
 
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
-  if (ESP_SendCmd("AT+CWJAP=\"" WIFI_SSID "\",\"" WIFI_PASS "\"\r\n",
-                  "WIFI GOT IP", 5000) == ESP_OK) {
-    wifi_connected = 1;
-  } else {
-    wifi_connected = 0;
+  if (!wifi_join())
     Log_Write(LOG_WARN, "reconnect: wifi failed");
-  }
   snprintf(cmd, sizeof cmd, "AT+CIPSTART=\"TCP\",\"%s\",%u\r\n", p->host,
            (unsigned)p->port);
   if (ESP_SendCmd(cmd, "CONNECT", 5000) != ESP_OK) {

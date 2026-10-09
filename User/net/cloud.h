@@ -1,5 +1,5 @@
-#ifndef PAL_H
-#define PAL_H
+#ifndef CLOUD_H
+#define CLOUD_H
 
 #include "main.h"
 #include "stdio.h"
@@ -11,10 +11,6 @@
 /* ============================================================
  *  云端/连接配置 —— 唯一真值源（改这里，别动 pal.c）
  * ============================================================ */
-/* WiFi */
-#define WIFI_SSID  "Magic7"
-#define WIFI_PASS  "121qweqwe"
-
 /* 云平台选择：CLOUD_E2 / CLOUD_ONENET
  * 也可以构建时覆盖：-DCLOUD_TARGET=CLOUD_ONENET */
 #define CLOUD_E2      0
@@ -50,6 +46,13 @@
 #endif
 #ifndef ONENET_TOKEN
 #define ONENET_TOKEN      "version=2018-10-31&res=products%2FWW0f6843I6%2Fdevices%2Fhumi_temp&et=1822724100&method=sha1&sign=PtFUppXWHY6iMg%2BEMqieAJyGZLo%3D"
+#endif
+
+/* 当前云平台名（关于页显示） */
+#if CLOUD_TARGET == CLOUD_E2
+#define CLOUD_PROFILE_NAME  "E2"
+#else
+#define CLOUD_PROFILE_NAME  "OneNET"
 #endif
 
 /* 调试串口输出（UART5 PC12/PD2 115200），关键事件用 */

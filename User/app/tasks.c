@@ -21,6 +21,7 @@
 #include "esp_uart.h"
 #include "ESP_at.h"
 #include "cloud.h"
+#include "wifi_conn.h"
 #include "tasks.h"
 #include "w25qxx.h"
 #include "log.h"
@@ -94,6 +95,10 @@ void MQTT(void)
     {
 				 
 		//	xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
+        if (wifi_reconnect_request) {               // 设置页保存了新凭据：强制全量重连
+            wifi_reconnect_request = 0;
+            g_mqtt_connected = 0;
+        }
 			
 			xQueueReceive(data_queue, &data_q,portMAX_DELAY);
 			
@@ -167,7 +172,9 @@ void AT(void)
     uint8_t heart_fail = 0;  // 心跳连续失败次数
     for (;;)
     {
-        vTaskDelay(10000);  // 每 10 秒检测一次心跳						
+        /* 分段等待：WiFi 设置页的重连请求可即时打断 10s 心跳间隔 */
+        for (int i = 0; i < 10 && !wifi_reconnect_request; i++)
+            vTaskDelay(1000);
         xSemaphoreTake(uart1_mutex, portMAX_DELAY);	//阻塞获取互斥锁
 				RingBuf_Clear();														//关键点 先清空缓冲区 否则有脏数据影响判断
         if (g_mqtt_connected)

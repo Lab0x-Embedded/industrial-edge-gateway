@@ -1,9 +1,8 @@
 #include "lvgl.h"
-#include "log.h"
 #include "tasks.h" 
 #include "stdio.h"
 #include "stm32f4xx.h"
-#include "w25qxx.h"
+#include "page_settings.h"
 
 // 字体声明
 extern lv_font_t font_chinese_9;
@@ -13,7 +12,7 @@ lv_obj_t *bar_light;
 lv_obj_t *label_light;
 
 lv_obj_t *page_main_create(void);
-void page_log_refresh(void);
+static void btn_click_jump_settings(lv_event_t *e);
 /* 全局控件 */
 static lv_obj_t *label_temp;
 static lv_obj_t *label_humi;
@@ -23,68 +22,12 @@ static lv_obj_t *bar_temp;
 static lv_obj_t *bar_humi;
 static lv_obj_t *btn_test;  // 按钮句柄
 
-//=====新增日志页面全局控件=====
-static lv_obj_t *scr_log = NULL;    //日志屏幕
-static lv_obj_t *list_log = NULL;   //日志列表
-static lv_obj_t *btn_back;         //日志页返回按钮
-//static lv_obj_t *scr_main = NULL;    //日志屏幕
-
-extern lv_obj_t *main_scr;
-static void btn_back_click(lv_event_t *e);
-void page_main_update_status(uint8_t wifi, uint8_t mqtt);
-extern  uint32_t log_write_offset ;
-extern volatile uint8_t wifi_connected;    // ESP8266 已连上 AP（pal.c 维护）
-
-lv_obj_t *page_log_create(void)
+/* 设置按钮事件回调 */
+static void btn_click_jump_settings(lv_event_t *e)
 {
-    lv_obj_t *scr = lv_obj_create(NULL);				//NULL 创建独立屏幕
-    lv_obj_set_style_bg_color(scr,lv_color_hex(0xF8F9FA),0);
-    lv_obj_clear_flag(scr,LV_OBJ_FLAG_SCROLLABLE);			//禁用 scr 这个 LVGL 屏幕对象的滚动功能
-
-    //顶部返回按钮
-    btn_back = lv_btn_create(scr);
-    lv_obj_set_size(btn_back,65,35);
-    lv_obj_align(btn_back,LV_ALIGN_TOP_LEFT,5,5);
-    lv_obj_set_style_bg_color(btn_back,lv_color_hex(0x0F3460),0);
-	
-    lv_obj_t *lab_back = lv_label_create(btn_back);
-    lv_label_set_text(lab_back,"返回");
-		lv_obj_align(lab_back, LV_ALIGN_CENTER, 0, 0); 
-    lv_obj_set_style_text_font(lab_back,&font_chinese_9,0);
-    lv_obj_add_event_cb(btn_back,btn_back_click,LV_EVENT_CLICKED,NULL);	//事件回调
-
-    //页面标题
-    lv_obj_t *title_log = lv_label_create(scr);
-    lv_label_set_text(title_log,"系统运行日志");
-    lv_obj_align(title_log,LV_ALIGN_TOP_MID,0,8);
-    lv_obj_set_style_text_font(title_log,&font_chinese_9,0);
-
-    //日志列表（可滚动）
-    list_log = lv_list_create(scr);
-    lv_obj_set_size(list_log,lv_obj_get_width(scr)-10,lv_obj_get_height(scr)-60);
-    lv_obj_align(list_log,LV_ALIGN_BOTTOM_MID,0,-5);
-    lv_obj_set_style_radius(list_log,6,0);
-
-    return scr;
+    (void)e;
+    page_settings_open();
 }
-
-//日志按钮事件回调
-static void btn_click_jump_log(lv_event_t *e)
-{
-    if(scr_log == NULL)
-        scr_log = page_log_create();
-    lv_scr_load(scr_log);			//加载日志页面
-    page_log_refresh(); //仅切页面刷新1次日志
-}
-
-//日志页【返回】按钮回调
-static void btn_back_click(lv_event_t *e)
-{
-
-	lv_scr_load(main_scr);
-	 page_main_update_status(wifi_connected, g_mqtt_connected);				//返回主页面后更新连接状态
-}
-
 
 /**
  * @brief  创建主监控页面
@@ -248,79 +191,24 @@ lv_obj_t *page_main_create(void)
     lv_obj_set_style_text_color(label_uptime, lv_color_hex(0xC9D8E8), 0);
     lv_obj_set_style_text_font(label_uptime, &font_chinese_9, 0);
 
-    // ===================== 右上角 日志按钮 =====================
-    btn_test = lv_btn_create(scr);                          // 创建按键
-    lv_obj_set_size(btn_test, 65, 35);                      // 按键尺寸
-    lv_obj_align(btn_test, LV_ALIGN_TOP_RIGHT, -3, 3);      // 屏幕右上角
-    lv_obj_set_style_bg_color(btn_test, lv_color_hex(0x4A90E2), 0); // 蓝色按键
-    lv_obj_set_style_radius(btn_test, 4, 0);                // 按键圆角
+    // ===================== 右上角 设置按钮 =====================
+    btn_test = lv_btn_create(scr);
+    lv_obj_set_size(btn_test, 65, 35);
+    lv_obj_align(btn_test, LV_ALIGN_TOP_RIGHT, -3, 3);
+    lv_obj_set_style_bg_color(btn_test, lv_color_hex(0x4A90E2), 0);
+    lv_obj_set_style_radius(btn_test, 4, 0);
 
-    // 按钮文字
     lv_obj_t *lab_btn = lv_label_create(btn_test);
-    lv_label_set_text(lab_btn, "日志");
-		lv_obj_align(lab_btn, LV_ALIGN_CENTER, 0, 0); 
+    lv_label_set_text(lab_btn, LV_SYMBOL_SETTINGS);
+    lv_obj_align(lab_btn, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_text_color(lab_btn, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lab_btn, &font_chinese_9, 0);
 
-    // 绑定点击事件回调函数
-    lv_obj_add_event_cb(btn_test, btn_click_jump_log, LV_EVENT_CLICKED, NULL);
+    /* 设置中枢：WiFi 配置 / 系统日志 / 关于设备 */
+    lv_obj_add_event_cb(btn_test, btn_click_jump_settings, LV_EVENT_CLICKED, NULL);
 
     // 返回当前页面句柄
     return scr;
 }
-/*
-事件触发→Log_Write→打包Log_Obj→W25Q存入→log_write_offset++
-                                  ↓
-点击日志按钮→page_log_refresh→从log_write_offset倒序向前读→渲染列表(新在上)
-
-从 ** 日志尾部（即将写入的空白地址）** 往前一条一条读；
-读到有效日志立刻加到列表，先读到的最新日志排在最上面；
-最多 30 条，旧日志不会被擦除，但超出条数不再显示；
-每次打开日志页清空列表，重新倒序刷新。
-*/
-//刷新日志列表，从flash读取日志      效果：新日志置顶，老日志自动不在列表展示，不用每次全擦分区。
-void page_log_refresh(void)
-{
-    if(list_log == NULL) return;
-    lv_obj_clean(list_log);		//清空列表原有所有条目
-
-    Log_Obj log_tmp;
-	uint32_t offset = log_write_offset;		//下一条要写入的空白地址，最后一条有效日志在它前面(日志写指针 为空白地址)
-    char buf[128];
-    const char *level_str;
-    uint8_t cnt=0;		//计数，最多只显示 30 条日志
-
-    // 倒着往前读，最多30条
-    while(offset >= LOG_OBJ_SIZE && cnt<30)
-    {
-        offset -= LOG_OBJ_SIZE;					//地址先往前挪一条日志长度，指向当前最后一条有效日志的起始地址
-        if(Log_ReadOne(offset,&log_tmp) == 0)
-        {
-            uint32_t sec = log_tmp.time_stamp / 1000U;
-            uint32_t h = sec / 3600U;
-            uint32_t m = (sec % 3600U) / 60U;
-            uint32_t s = sec % 60U;
-
-            switch(log_tmp.level)
-            {
-                case LOG_INFO:  level_str="INFO";break;
-                case LOG_WARN:  level_str="WARN";break;
-                case LOG_ERROR: level_str="ERROR";break;
-                default:level_str="UNK";break;
-            }
-            snprintf(buf,sizeof(buf),"%02u:%02u:%02u %s %s",(unsigned)h,(unsigned)m,(unsigned)s,level_str,log_tmp.content);
-            lv_list_add_text(list_log,buf);
-            cnt++;
-        }
-    }
-
-    if(cnt == 0)
-    {
-        lv_list_add_text(list_log, "(no logs)");
-    }
-}
-
-
 extern TickType_t idle_tick;
 extern uint8_t lcd_bl_en ; //1亮屏 0熄屏
 // 更新函数
