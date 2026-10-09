@@ -226,8 +226,10 @@ static void modal_open(void)
     lv_obj_clear_flag(modal, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(modal);              /* 盖在页面所有控件之上 */
 
-    /* 没结果、或结果太旧 → 重扫一次，保证打开看到的是新鲜的 */
-    if (wifi_ap_count == 0 || (HAL_GetTick() - scan_start_tick) > SCAN_FRESH_MS)
+    /* 没结果、或结果太旧 → 重扫一次；已经在扫了就别重复下发请求
+     * （AT 任务一次扫描就要 10s 级，重复请求等于再占一轮串口） */
+    if (wifi_scan_state != WIFI_SCAN_RUNNING &&
+        (wifi_ap_count == 0 || (HAL_GetTick() - scan_start_tick) > SCAN_FRESH_MS))
         start_scan();
 
     modal_refresh();
