@@ -17,6 +17,10 @@
 #include <stdio.h>
 #include <stdlib.h>     /* atoi：解析 CWLAP 应答里的 rssi */
 
+/* UART4(ESP8266) 的 DMA 接收环境：自检/自愈时要重新挂载接收 */
+extern uint8_t a[256];
+extern DMA_HandleTypeDef hdma_uart4_rx;
+
 /* —— 凭据存档：W25Q 参数扇区（0xF00000 是触摸校准，相邻互不影响）—— */
 #define WIFI_CFG_ADDR   0x00F01000UL
 #define WIFI_CFG_MAGIC  0x57494643UL   /* "WIFC" */
@@ -42,6 +46,10 @@ volatile uint8_t wifi_scan_state = WIFI_SCAN_IDLE;
 volatile uint8_t wifi_ap_count = 0;
 char             wifi_ap_list[WIFI_AP_MAX][33];
 int8_t           wifi_ap_rssi[WIFI_AP_MAX];
+volatile int8_t  wifi_scan_code = 0;
+char             wifi_scan_raw[64] = {0};
+volatile uint8_t wifi_rx_armed = 1;    /* 失败自检：当时 UART4 RX DMA 还挂着吗 */
+volatile uint8_t wifi_tx_err   = 0;    /* 失败自检：发送是否报错（HAL_UART_Transmit 返回值） */
 
 void wifi_conn_load(void)
 {
@@ -191,6 +199,29 @@ static void wait_line_idle(uint32_t quiet_ms)
     }
 }
 
+/* 自检 + 自愈：UART4 的 RX DMA 还挂着吗？
+ * 为什么必须有这个函数：一旦 UART4 出现溢出(ORE)/帧错误/噪声，STM32 HAL 会**中止**
+ * 正在进行的 DMA 接收，而且不会自动重启（HAL_UART_ErrorCallback 是弱定义空函数，
+ * 本项目一直没实现）。DMA 一停，RxEventCallback 就再也不会被触发，接收永久停摆 ——
+ * 模块在正常说话，板子却收不到一个字节：AT 全部超时、WiFi 连不上、扫描永远失败，
+ * 只能复位恢复。这正好解释了"时好时坏、后来一直坏"。
+ * 这里返回 1=还挂着；0=刚掉了（顺手重新挂上 + 记日志）。 */
+static uint8_t rx_selfcheck(void)
+{
+    uint8_t armed = (huart4.RxState == HAL_UART_STATE_BUSY_RX) ? 1 : 0;
+    if (!armed)
+    {
+        __HAL_UART_CLEAR_OREFLAG(&huart4);      /* F4 上这一句同时清 PE/FE/NE/ORE */
+        huart4.ErrorCode = HAL_UART_ERROR_NONE;
+        HAL_UARTEx_ReceiveToIdle_DMA(&huart4, a, sizeof(a));
+        __HAL_DMA_DISABLE_IT(&hdma_uart4_rx, DMA_IT_HT);
+        Log_Write(LOG_WARN, "uart4 rx DEAD -> rearm");
+    }
+    return armed;
+}
+
+static void probe_capture(uint32_t ms);   /* 前向声明：退透传失败时要用它抓原始字节 */
+
 static int at_exit_passthrough_impl(void)
 {
     /* 三次机会，且一次比一次给更长的保护时间。
@@ -202,7 +233,8 @@ static int at_exit_passthrough_impl(void)
         RingBuf_Clear();
         wait_line_idle(60);                      /* 等线路安静下来（最多等 240ms） */
         RingBuf_Clear();
-        HAL_UART_Transmit(&huart4, (uint8_t *)"+++", 3, 100);
+        if (HAL_UART_Transmit(&huart4, (uint8_t *)"+++", 3, 100) != HAL_OK)
+            wifi_tx_err = 1;                     /* 发送都失败 → 自检行会写 TX err */
         vTaskDelay(1000 + attempt * 400);        /* 退透传保护时间：1.0 / 1.4 / 1.8s */
         if (ESP_SendCmd_OK("AT\r\n", 2000) == ESP_OK)
         {
@@ -211,6 +243,11 @@ static int at_exit_passthrough_impl(void)
         }
         dbg_print("[NET] at escape retry\r\n");
     }
+
+    /* 三次都没应答：先自检 RX 是否掉线（掉了就重新挂上），再抓一段原始字节 —— 
+     * 屏幕上就能看到"板子还能不能听见模块 / 模块到底在说什么" */
+    wifi_rx_armed = rx_selfcheck();
+    probe_capture(400);
     return -1;
 }
 
@@ -233,6 +270,51 @@ int wifi_at_passthrough_enter(void)
     return 0;
 }
 
+/* 把模块原始应答的可打印部分同时落到两处：
+ *  - wifi_scan_raw[]：给屏幕自检显示（WiFi 列表弹窗里会显示 RAW 行）
+ *  - 日志页：Log_Write 一条
+ * 目的：扫描失败时不接串口也能看到模块到底回了什么（busy p... / ERROR / 乱码）。 */
+static void log_scan_snippet(const char *b, int n)
+{
+    int k = 0;
+    for (int i = 0; i < n && k < (int)sizeof(wifi_scan_raw) - 1; i++) {
+        char c = b[i];
+        if (c == '\r' || c == '\n') c = ' ';
+        wifi_scan_raw[k++] = (c >= 0x20 && c < 0x7F) ? c : '.';
+    }
+    wifi_scan_raw[k] = 0;
+
+    char m[80];
+    snprintf(m, sizeof(m), "resp:%s", wifi_scan_raw);
+    Log_Write(LOG_WARN, m);
+}
+
+/* 探测抓包：静等 ms 毫秒，把模块这段时间吐出来的原始字节记进 wifi_scan_raw。
+ * 这是"模块到底在说什么"的关键证据（也是本项目一贯的自检风格：把原始字节显示出来）：
+ *   空          → 模块根本没在跟我们说话（没模块/没上电/波特率不对/AT 固件没跑）
+ *   busy p...   → 模块在忙（上一次操作没收尾）
+ *   二进制乱码   → 波特率不对
+ *   +IPD/二进制  → 模块还在透传（+++ 没生效） */
+static void probe_capture(uint32_t ms)
+{
+    int k = 0;
+    uint32_t t0 = HAL_GetTick();
+    while (HAL_GetTick() - t0 < ms * 3u && k < (int)sizeof(wifi_scan_raw) - 1)
+    {
+        uint8_t ch;
+        if (RingBuf_Read(&ch))
+        {
+            char c = (ch >= 0x20 && ch < 0x7F) ? (char)ch : '.';
+            if (c != ' ' || k > 0)                       /* 前导换行别占位置 */
+                wifi_scan_raw[k++] = c;
+            t0 = HAL_GetTick();                          /* 有字节就继续等 */
+        }
+        else
+            vTaskDelay(5);
+    }
+    wifi_scan_raw[k] = 0;
+}
+
 /* ============================================================
  *  热点扫描：退透传 → AT+CWLAP（逐字节收）→ 解析去重 → 恢复透传
  *  返回：>=0 = 扫到的热点数（0 = 正常应答但没有热点）
@@ -248,17 +330,25 @@ int wifi_scan_locked(void)
     uint8_t was_online = g_mqtt_connected;   /* 扫描前是否在线：决定要不要恢复透传 */
 
     wifi_ap_count = 0;
+    wifi_tx_err   = 0;
 
     if (wifi_at_escape() != 0)
     {
         Log_Write(LOG_WARN, "scan FAIL: no AT mode");
+        wifi_scan_code = -1;
         return -1;                  /* 没确认进入 AT 模式：此时多半还在透传，
                                      * 不能再发 CIPMODE/CIPSEND 去"恢复"（会污染 TCP 流） */
     }
 
+    /* 顺手把模块拉回 station 模式：CWLAP 只在 station / station+AP 下可用，
+     * 模块若停在 SoftAP（CWMODE=2，出厂默认就是 2 的固件）会直接对 CWLAP 回
+     * ERROR —— 现象就是"扫描永远失败"。幂等且便宜，一次 2s 上限。 */
+    ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
+
     /* 必须手动逐字节收：ESP_SendCmd 是"匹配到就丢弃"的流式实现，
      * 用它会把 +CWLAP 行当匹配数据吃掉，啥也剩不下。 */
-    HAL_UART_Transmit(&huart4, (uint8_t *)"AT+CWLAP\r\n", 10, 100);
+    if (HAL_UART_Transmit(&huart4, (uint8_t *)"AT+CWLAP\r\n", 10, 100) != HAL_OK)
+        wifi_tx_err = 1;
     uint32_t t0 = HAL_GetTick();
     /* 12s（原 8s）：密环境下 CWLAP 要扫全部信道，慢的时候 8s 收不完会只剩半份
      * 列表（看着像"少了好几个热点"）；正常情况收到 \r\nOK\r\n 就提前退出了。 */
@@ -295,12 +385,18 @@ int wifi_scan_locked(void)
 
     if (n == 0)
     {
+        /* 一个字节没回：模块要么没收到 CWLAP，要么根本没在 AT 模式应答 */
+        wifi_scan_raw[0] = 0;
         Log_Write(LOG_WARN, "scan FAIL: no reply");
+        wifi_scan_code = -2;
         return -2;
     }
     if (strstr(buf, "ERROR") != NULL)
     {
-        Log_Write(LOG_WARN, "scan FAIL: CWLAP error");
+        /* 模块明确回 ERROR（如 "busy p..."、CWMODE 不对）。
+         * 把原始应答的可打印部分落到日志页 —— 不接串口也能看到模块到底说了什么。 */
+        log_scan_snippet(buf, n);
+        wifi_scan_code = -3;
         return -3;
     }
 
@@ -360,6 +456,8 @@ int wifi_scan_locked(void)
         Log_Write(LOG_INFO, "scan: 0 AP");     /* 应答正常但没有热点，不算失败 */
 
     wifi_ap_count = (uint8_t)cnt;
+    wifi_scan_code = (int8_t)cnt;
+    wifi_scan_raw[0] = 0;                     /* 成功就别留上次失败的原始字节 */
     dbg_print("[NET] scan %d AP\r\n", cnt);
     return cnt;
 }

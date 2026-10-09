@@ -35,6 +35,10 @@ extern volatile uint8_t wifi_scan_state;     /* 上面四态，UI 轮询 */
 extern volatile uint8_t wifi_ap_count;       /* 扫描结果条数 */
 extern char             wifi_ap_list[WIFI_AP_MAX][33];
 extern int8_t           wifi_ap_rssi[WIFI_AP_MAX];  /* 与 wifi_ap_list 一一对应，dBm（-127=未知） */
+extern volatile int8_t  wifi_scan_code;              /* 上次扫描结果码：>=0 热点数；-1 无AT模式；-2 无应答；-3 CWLAP报错 */
+extern char             wifi_scan_raw[64];           /* 失败时抓到的一小段原始应答（可打印化），给屏幕自检用 */
+extern volatile uint8_t wifi_rx_armed;               /* 失败自检：当时 UART4 RX DMA 是否还挂着 */
+extern volatile uint8_t wifi_tx_err;                 /* 失败自检：发送是否报错 */
 
 void wifi_conn_load(void);                                        /* 上电装载存档（幂等） */
 void wifi_conn_get(char *ssid, size_t n_ssid, char *pass, size_t n_pass);

@@ -158,6 +158,25 @@ uint16_t Command_GetCommand(uint8_t *command) {
 
 extern TickType_t idle_tick;
 extern uint8_t lcd_bl_en ; //1亮屏 0熄屏
+
+/* 出错回调：**项目原本没有实现它**，这是个致命缺口。
+ * UART4 一旦出现溢出(ORE)/帧错误/噪声，STM32 HAL 会中止正在进行的 DMA 接收，
+ * 而且不会自动重启（HAL_UART_ErrorCallback 是弱定义空函数）。DMA 一停，
+ * HAL_UARTEx_RxEventCallback 再也不会被触发，RX 就永久停摆：
+ * 模块在正常说话，板子却收不到一个字节 → AT 全部超时 → "WiFi 连不上 / 扫描永远失败"，
+ * 只能复位恢复（现象就是"开始好好的，某个时刻起一直连不上"）。
+ * 这里做两件事：清错误标志 + 立刻重新挂上 DMA 接收（与 RxEventCallback 一致）。 */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+	if (huart == &huart4)
+	{
+		__HAL_UART_CLEAR_OREFLAG(huart);      /* F4 上这一句同时清 PE/FE/NE/ORE */
+		huart->ErrorCode = HAL_UART_ERROR_NONE;
+		HAL_UARTEx_ReceiveToIdle_DMA(&huart4, a, sizeof(a));
+		__HAL_DMA_DISABLE_IT(&hdma_uart4_rx, DMA_IT_HT);
+	}
+}
+
 /*接收完成回调*/
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
