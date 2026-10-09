@@ -176,12 +176,14 @@ void AT(void)
         xSemaphoreTake(uart1_mutex, portMAX_DELAY);	//阻塞获取互斥锁
 
         /* WiFi 设置页的点名扫描：在持锁的 AT 语境里做（UI 线程只置标志，不阻塞界面）。
-         * 失败立刻重试一次：退透传那一步常年被下行数据吞 +++，两次足以覆盖。 */
+         * 只在"退不出透传"（-1）时重试一次 —— 这是最常见的瞬时失败，且这种失败
+         * 本身很便宜（~6s）；而 CWLAP 无应答/报错要占满 12s 窗口，再重试一次就
+         * 是 ~36s 独占串口，会把 MQTT 发布和心跳一起挤掉，不如等用户再点一次刷新。 */
         if (wifi_scan_request)
         {
             wifi_scan_request = 0;
             int ap = wifi_scan_locked();
-            if (ap < 0)
+            if (ap == -1)
             {
                 dbg_print("[NET] scan retry\r\n");
                 ap = wifi_scan_locked();

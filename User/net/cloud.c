@@ -250,7 +250,11 @@ void MQTT_Init(void) {
     Log_Write(LOG_WARN, "init: tcp fail");
   vTaskDelay(500);
 
-  wifi_at_passthrough_enter();      /* CIPMODE=1 + CIPSEND */
+  if (wifi_at_passthrough_enter() != 0) {   /* CIPMODE=1 + CIPSEND，确认拿到 ">" */
+    Log_Write(LOG_WARN, "init: passthrough fail");
+    g_mqtt_connected = 0;
+    return;
+  }
   vTaskDelay(500);
   RingBuf_Clear();
 
@@ -292,7 +296,11 @@ void RE_MQTT_Init(void) {
   if (ESP_SendCmd(cmd, "CONNECT", 5000) != ESP_OK) {
     Log_Write(LOG_WARN, "reconnect: tcp failed");
   }
-  wifi_at_passthrough_enter();
+  if (wifi_at_passthrough_enter() != 0) {
+    Log_Write(LOG_WARN, "reconnect: passthrough fail");
+    g_mqtt_connected = 0;
+    return;
+  }
   vTaskDelay(500);
   RingBuf_Clear();
 

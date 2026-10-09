@@ -52,11 +52,13 @@ int  wifi_join(void);
  * wifi_at_escape：退出透传并**确认**进入 AT 指令模式（静默期 + 重试）；
  *                   0=已在 AT 模式，-1=没应答（多半还在透传，此时别再发 AT 指令，
  *                   否则会被当成 TCP 数据灌进连接里）。cloud.c 的连接流程也用它。
- * wifi_at_passthrough_enter：CIPMODE=1 + CIPSEND 恢复透传 —— 只有确认 TCP 在线时才调。 */
+ * wifi_at_passthrough_enter：CIPMODE=1 + CIPSEND 恢复透传 —— 只有确认 TCP 在线时才调；
+ *                   0=拿到 ">"（透传真的起来了），-1=没拿到（TCP 多半已断，
+ *                   调用方应把 g_mqtt_connected 置 0 走重连，别再往串口灌 MQTT 字节）。 */
 int  wifi_scan_locked(void);
 int  wifi_time_sync_locked(void);
 int  wifi_at_escape(void);
-void wifi_at_passthrough_enter(void);
+int  wifi_at_passthrough_enter(void);
 
 extern volatile uint8_t wifi_connected;       /* 已连上 AP */
 extern char             g_esp_ip[16];         /* AT+CIFSR 结果，"--"=未获取 */

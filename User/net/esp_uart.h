@@ -14,6 +14,7 @@
 uint16_t Command_Write(uint8_t *data, uint16_t length);
 
 uint16_t Command_GetCommand(uint8_t *command);
+uint16_t Command_GetLength(void);   /* 环形缓冲里未读字节数：用来判断"串口是否静默" */
 uint8_t RingBuf_Read(uint8_t *out) ;
 void RingBuf_Clear(void);
 #endif /* INC_COMMAND_H_ */

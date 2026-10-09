@@ -171,18 +171,40 @@ int wifi_join(void)
  *  at_exit_passthrough 返回 0=确认已在 AT 指令模式；-1=没应答。
  *  为什么要重试 + 静默期：ESP 在透传模式下要求 "+++" 前后各有 20ms 静默，
  *  当时若正好有下行数据，"+++" 会被当成 TCP 数据吞掉 → 退不出透传 →
- *  后面发的 CWLAP 也被当数据 → 用户看到"扫描失败"。实测这是最常见的失败原因，
- *  所以给两次机会，并在失败时把原因写进日志页（LOG_WARN）。
+ *  后面发的 CWLAP 也被当数据 → 用户看到"扫描失败"。这是最常见的失败原因，
+ *  所以：先等出真正的静默窗口（wait_line_idle）再发，给三次机会、一次比一次
+ *  等更久，失败时把原因写进日志页（LOG_WARN）。
  * ============================================================ */
+/* 等串口静默 ≥quiet_ms：靠"环形缓冲里未读字节数连续 quiet_ms 不变"来判断。
+ * 最多等 4 倍时间就放弃（不能为了等静默把 AT 任务卡死）。 */
+static void wait_line_idle(uint32_t quiet_ms)
+{
+    uint16_t last = Command_GetLength();
+    uint32_t t0   = HAL_GetTick();
+
+    while (HAL_GetTick() - t0 < quiet_ms * 4u)
+    {
+        vTaskDelay(5);
+        uint16_t now = Command_GetLength();
+        if (now != last) { last = now; t0 = HAL_GetTick(); continue; }  /* 还有数据，重新计时 */
+        if (HAL_GetTick() - t0 >= quiet_ms) return;                     /* 安静够了 */
+    }
+}
+
 static int at_exit_passthrough_impl(void)
 {
-    for (int attempt = 0; attempt < 2; attempt++)
+    /* 三次机会，且一次比一次给更长的保护时间。
+     * ESP 只认"+++ 前后各 20ms 都安静"的那种 +++；透传模式下随时可能有下行数据
+     * 把 +++ 吞掉，所以先用 wait_line_idle() 等出一个真正的静默窗口再发，
+     * 而不是盲等 50ms。 */
+    for (int attempt = 0; attempt < 3; attempt++)
     {
         RingBuf_Clear();
-        vTaskDelay(50);                          /* 先让线路静一下再发 +++ */
+        wait_line_idle(60);                      /* 等线路安静下来（最多等 240ms） */
+        RingBuf_Clear();
         HAL_UART_Transmit(&huart4, (uint8_t *)"+++", 3, 100);
-        vTaskDelay(1000);                        /* 退透传保护时间，ESP 规范要求 */
-        if (ESP_SendCmd_OK("AT\r\n", 1500) == ESP_OK)
+        vTaskDelay(1000 + attempt * 400);        /* 退透传保护时间：1.0 / 1.4 / 1.8s */
+        if (ESP_SendCmd_OK("AT\r\n", 2000) == ESP_OK)
         {
             RingBuf_Clear();
             return 0;
@@ -197,11 +219,18 @@ int wifi_at_escape(void)
     return at_exit_passthrough_impl();
 }
 
-void wifi_at_passthrough_enter(void)
+/* 恢复透传。返回 0=拿到 ">" 提示、透传真的起来了；-1=没拿到（多半是 TCP 已经
+ * 断了 —— 此时模块停在"CIPMODE=1 但没在发送"的中间态，后续裸发的 MQTT 字节
+ * 会被模块当 AT 指令吃成 ERROR）。调用方拿到 -1 应该把 g_mqtt_connected 置 0，
+ * 让重连流程（RE_MQTT_Init 会 AT+RST）去重建，而不是继续往串口灌数据。 */
+int wifi_at_passthrough_enter(void)
 {
-    ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000);
-    ESP_SendCmd("AT+CIPSEND\r\n", ">", 3000);
+    if (ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000) != ESP_OK)
+        return -1;
+    if (ESP_SendCmd("AT+CIPSEND\r\n", ">", 3000) != ESP_OK)
+        return -1;
     RingBuf_Clear();
+    return 0;
 }
 
 /* ============================================================
@@ -231,7 +260,9 @@ int wifi_scan_locked(void)
      * 用它会把 +CWLAP 行当匹配数据吃掉，啥也剩不下。 */
     HAL_UART_Transmit(&huart4, (uint8_t *)"AT+CWLAP\r\n", 10, 100);
     uint32_t t0 = HAL_GetTick();
-    while (HAL_GetTick() - t0 < 8000 && n < (int)sizeof(buf) - 1) {
+    /* 12s（原 8s）：密环境下 CWLAP 要扫全部信道，慢的时候 8s 收不完会只剩半份
+     * 列表（看着像"少了好几个热点"）；正常情况收到 \r\nOK\r\n 就提前退出了。 */
+    while (HAL_GetTick() - t0 < 12000 && n < (int)sizeof(buf) - 1) {
         uint8_t ch;
         if (RingBuf_Read(&ch)) {
             buf[n++] = (char)ch;
@@ -249,7 +280,16 @@ int wifi_scan_locked(void)
      * 之后 cloud.c 的 AT+CWJAP / AT+CIPSTART 会被当成 TCP 数据发出去，
      * 模块再也收不到 AT 指令 —— 表现就是"怎么都连不上"（只能靠 AT+RST 救）。 */
     if (was_online)
-        wifi_at_passthrough_enter();
+    {
+        /* 恢复失败 = TCP 其实已经断了：立刻置离线，让重连流程（AT+RST）重建，
+         * 否则模块停在"CIPMODE=1 但没在发送"的中间态，心跳裸发的字节会被
+         * 模块当 AT 指令吃成 ERROR，白折腾三轮心跳（~30s）才发现。 */
+        if (wifi_at_passthrough_enter() != 0)
+        {
+            g_mqtt_connected = 0;
+            Log_Write(LOG_WARN, "scan: link lost");
+        }
+    }
     else
         RingBuf_Clear();
 
@@ -355,7 +395,12 @@ int wifi_time_sync_locked(void)
     }
     buf[n] = 0;
 
-    wifi_at_passthrough_enter();   /* 本函数只在线时被调用，恢复透传是安全的 */
+    /* 本函数只在线时被调用：恢复失败说明 TCP 已断，置离线让重连重建 */
+    if (wifi_at_passthrough_enter() != 0)
+    {
+        g_mqtt_connected = 0;
+        Log_Write(LOG_WARN, "sntp: link lost");
+    }
 
     /* 应答形如： +CIPSNTPTIME:Fri Oct  9 12:34:56 2026
      * "+CIPSNTPTIME:" 之后第一个冒号就是"时:分:秒"的分隔符（星期/月份里没冒号） */
