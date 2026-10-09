@@ -28,4 +28,7 @@ extern volatile uint8_t wifi_connected;       /* 已连上 AP */
 extern char             g_esp_ip[16];         /* AT+CIFSR 结果，"--"=未获取 */
 extern volatile uint8_t wifi_reconnect_request; /* UI 置 1：AT 任务用新凭据全量重连 */
 
+/* 扫描可用热点（阻塞最长 ~10s，需在 UI 事件里调用前自行刷新界面） */
+int wifi_scan(char (*out)[33], int max_ap);
+
 #endif

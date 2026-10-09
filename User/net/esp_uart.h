@@ -7,11 +7,11 @@
 #include "stm32f4xx.h"
 #include "stdio.h"
 
-#define BUFFER_SIZE 300
+#define BUFFER_SIZE 2048   /* CWLAP 扫描应答很长（AT+CWLAP 多热点可达 1KB+） */
 #define COMMAND_MIN_LENGTH 4
 uint8_t Command_Write(uint8_t *data, uint8_t length);
 
-uint8_t Command_GetCommand(uint8_t *command);
+uint16_t Command_GetCommand(uint8_t *command);
 uint8_t RingBuf_Read(uint8_t *out) ;
 void RingBuf_Clear(void);
 #endif /* INC_COMMAND_H_ */

@@ -23,10 +23,8 @@ extern DMA_HandleTypeDef hdma_uart4_rx;
 
 // 循环缓冲区
 uint8_t buffer[BUFFER_SIZE];
-// 循环缓冲区读索引
-uint8_t readIndex = 0;
-// 循环缓冲区写索引
-uint8_t writeIndex = 0;
+uint16_t readIndex = 0;    /* 缓冲 2048B，索引必须 16 位（uint8_t 会在 256 处错绕） */
+uint16_t writeIndex = 0;
 
 /**
  * @brief  清空环形缓冲区（重置读写指针）
@@ -51,9 +49,8 @@ void Command_AddReadIndex(uint8_t length) {
 * @param i 要读取的数据索引
 */
 
-uint8_t Command_Read(uint8_t i) {
-    uint8_t index = i % BUFFER_SIZE;
-    return buffer[index];
+uint8_t Command_Read(uint16_t i) {
+    return buffer[i % BUFFER_SIZE];
 }
 
 /*获取read下标对应的数据*/
@@ -67,8 +64,8 @@ uint8_t RingBuf_Read(uint8_t *out) {
 }
 
 
-uint8_t Command_GetLength() {
-    return (writeIndex + BUFFER_SIZE - readIndex) % BUFFER_SIZE;
+uint16_t Command_GetLength() {
+    return (uint16_t)((writeIndex + BUFFER_SIZE - readIndex) % BUFFER_SIZE);
 }
 
 
@@ -79,8 +76,8 @@ uint8_t Command_GetLength() {
 * @retval 1~BUFFER_SIZE-1 剩余空间
 * @retval BUFFER_SIZE 缓冲区为空
 */
-uint8_t Command_GetRemain() {
-    return BUFFER_SIZE - Command_GetLength();
+uint16_t Command_GetRemain() {
+    return (uint16_t)(BUFFER_SIZE - Command_GetLength());
 }
 
 /**	不会覆盖旧数据 满后停止写入
@@ -131,13 +128,13 @@ extern uint8_t screen_off_flag;
 * @param command 存储读取数据的指针
 * @return 实际读取的字节数（0 表示缓冲区为空）
 */
-uint8_t Command_GetCommand(uint8_t *command) {
-    uint8_t len = Command_GetLength();  // 获取当前未处理的数据长度
+uint16_t Command_GetCommand(uint8_t *command) {
+    uint16_t len = Command_GetLength();  // 获取当前未处理的数据长度
     if (len == 0) {
         return 0;
     }
     // 顺序读取 len 个字节到 command 中
-    for (uint8_t i = 0; i < len; i++) {
+    for (uint16_t i = 0; i < len; i++) {
         command[i] = Command_Read(readIndex + i);
     }
     Command_AddReadIndex(len);  // 移动读索引，表示这些数据已被消费
