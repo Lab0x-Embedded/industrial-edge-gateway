@@ -27,10 +27,10 @@
 #define E2_PRODUCT_KEY   "factory_sensor"
 #endif
 #ifndef E2_DEVICE_ID
-#define E2_DEVICE_ID     "dev_gateway_001"
+#define E2_DEVICE_ID     "dev_001"
 #endif
 #ifndef E2_DEVICE_SECRET
-#define E2_DEVICE_SECRET "CHANGE_ME"
+#define E2_DEVICE_SECRET "secret_001"
 #endif
 
 /* OneNET Studio（CLOUD_TARGET=CLOUD_ONENET 时生效）
@@ -45,7 +45,7 @@
 #define ONENET_DEVICE_ID  "humi_temp" // ClientID
 #endif
 #ifndef ONENET_TOKEN
-#define ONENET_TOKEN      "version=2018-10-31&res=products%2FWW0f6843I6%2Fdevices%2Fhumi_temp&et=1822724100&method=sha1&sign=PtFUppXWHY6iMg%2BEMqieAJyGZLo%3D"
+#define ONENET_TOKEN      "version=2018-10-31&res=products%2FWW0f6843I6%2Fdevices%2Fhumi_temp&et=1823071080&method=sha1&sign=MYFIosMyEEADO2RA9Kf2VefByW4%3D"
 #endif
 
 /* 当前云平台名（关于页显示） */
