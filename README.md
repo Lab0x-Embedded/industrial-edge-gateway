@@ -77,7 +77,7 @@ make reset / make openocd        # 复位 / 起 gdbserver
 | XPT2046 触摸 | CLK=PA5，MOSI=PB1，MISO=PB2，CS=PB0，PEN=PF11（低=按下）|
 | ESP8266（WIFI 座） | UART4：TX=PA0，RX=PA1，115200；RX=DMA1_Stream2，TX=DMA1_Stream4 |
 | RS485 | USART2：PA2/PA3，9600；方向 PG6（高发低收） |
-| W25Q128 | SPI1：PB3/4/5，CS=PG8（日志 0~4MB，补传缓存 4~8MB，触摸校准参数 0xF00000）|
+| W25Q128 | SPI1：PB3/4/5，CS=PG8；**总容量 16MB**：日志 0~4MB、补传缓存 4~8MB、触摸校准参数 0xF00000，其余空闲 |
 | 指示灯 | PE3（补传中/绿）、PE4（云端在线/红）、PG9（离线存储/黄），按固件写入语义高=亮 |
 | LVGL 心跳 | TIM3 1ms 中断；HAL 时基 = TIM4（FreeRTOS 占用 SysTick，TIM4 在 CubeMX 里显示灰色属正常）|
 | 调试串口 | UART5：PC12/PD2，115200 |
