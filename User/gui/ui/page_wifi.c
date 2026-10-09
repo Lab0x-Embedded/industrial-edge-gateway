@@ -1,10 +1,14 @@
 /* WiFi 配置页 · 深色
- * 交互定稿（用户反馈"一个下拉框一个输入框"的设计很怪）：
- *   默认只显示一个「选择热点」下拉选择器 —— 扫描结果直接进下拉，点开即选；
- *   要手打 SSID 时点「手动输入」，第 1 行原地换成输入框，再点「选择热点」换回。
- *   扫到的第一个选项是占位行「选择热点」，不会被当成热点连（回调里忽略 index 0）。
- * 扫描走异步：UI 只置 wifi_scan_request，~10s 的阻塞扫描在 AT 任务里做，
- * 界面不会卡住（旧版在点击回调里同步扫，界面冻 ~10s）。
+ *
+ * 交互定稿（用户拍板，替代旧的"下拉框 / 手动输入二选一"）：
+ *   第 1 行 = SSID 输入框 + 「WiFi 列表」按钮；
+ *   点按钮 → 全屏模态列表（按信号强度排序 + 显示 dBm）→ 点某行即把它填进
+ *   SSID 输入框，焦点自动跳到密码框，接着输密码、点连接。
+ *   没有"模式"这个概念了：SSID 输入框常驻、也能手输（配隐藏热点），
+ *   列表只当选择器 —— 少一套状态，少一次误解。
+ *
+ * 扫描仍然异步：UI 只置 wifi_scan_request，AT 任务在持锁的 AT 语境里执行
+ * （~10s 的阻塞扫描不会冻住界面），UI 用 500ms 定时器轮询 wifi_scan_state。
  */
 #include "page_wifi.h"
 #include "page_settings.h"
@@ -13,16 +17,17 @@
 #include "tasks.h"
 #include "stm32f4xx.h"
 #include <stdio.h>
+#include <string.h>
 
-#define OPT_PLACEHOLDER  "选择热点"
+#define SCAN_FRESH_MS   60000u   /* 结果新鲜度：超过这个时间再打开弹窗就重扫 */
+#define AP_ROW_H        26
 
 static lv_obj_t *scr_wifi = NULL;
-static lv_obj_t *ta_ssid, *ta_pass, *btn_conn, *btn_scan, *btn_mode, *lab_mode;
-static lv_obj_t *label_st, *dd_ssid, *kb;
+static lv_obj_t *ta_ssid, *ta_pass, *btn_conn, *label_st, *kb;
+static lv_obj_t *modal = NULL, *modal_list = NULL;
 static lv_timer_t *wifi_timer = NULL;
-static uint8_t mode_list = 1;              /* 1=下拉选热点  0=手打 SSID */
-static uint8_t last_scan_state = WIFI_SCAN_IDLE;
-static uint8_t timeout_shown = 0;          /* 只影响界面提示，不动 AT 任务的共享状态 */
+static uint8_t  last_scan_state = WIFI_SCAN_IDLE;
+static uint8_t  timeout_shown = 0;
 static uint32_t scan_start_tick = 0;
 
 static void btn_back(void)
@@ -30,9 +35,20 @@ static void btn_back(void)
     page_settings_open();
 }
 
+/* 焦点切换：清掉两个输入框的聚焦态，再给目标发一次 FOCUSED
+ * （ta_focus_cb 借这个事件把键盘绑过去；LVGL 也据此画光标） */
+static void focus_ta(lv_obj_t *ta)
+{
+    lv_obj_clear_state(ta_ssid, LV_STATE_FOCUSED);
+    lv_obj_clear_state(ta_pass, LV_STATE_FOCUSED);
+    lv_event_send(ta, LV_EVENT_FOCUSED, NULL);
+}
+
 static void ta_focus_cb(lv_event_t *e)
 {
-    lv_keyboard_set_textarea(kb, lv_event_get_target(e));
+    lv_obj_t *ta = lv_event_get_target(e);
+    lv_obj_add_state(ta, LV_STATE_FOCUSED);
+    lv_keyboard_set_textarea(kb, ta);
 }
 
 static void set_status(const char *txt, uint32_t color)
@@ -41,73 +57,182 @@ static void set_status(const char *txt, uint32_t color)
     lv_obj_set_style_text_color(label_st, lv_color_hex(color), 0);
 }
 
-/* 列表模式 ⇄ 自定义输入模式：同一行两个控件只显示一个，不换版面 */
-static void set_mode(uint8_t list_mode)
-{
-    mode_list = list_mode;
-    if (list_mode) {
-        lv_obj_add_flag(ta_ssid, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(dd_ssid, LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(lab_mode, "手动输入");
-        lv_keyboard_set_textarea(kb, ta_pass);
-    } else {
-        lv_obj_add_flag(dd_ssid, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(ta_ssid, LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(lab_mode, "选择热点");
-        lv_keyboard_set_textarea(kb, ta_ssid);
-    }
-}
-
-static void btn_mode_click(lv_event_t *e)
-{
-    (void)e;
-    set_mode(!mode_list);
-}
-
-/* 下拉选中热点 → 填入内部 SSID 变量（密码仍需手输，热点列表里拿不到密码） */
-static void dd_ssid_cb(lv_event_t *e)
-{
-    lv_obj_t *dd = lv_event_get_target(e);
-    if (lv_dropdown_get_selected(dd) == 0) return;   /* index 0 是占位行 */
-    char buf[48];
-    lv_dropdown_get_selected_str(dd, buf, sizeof buf);
-    lv_textarea_set_text(ta_ssid, buf);
-}
-
 /* 发起扫描：只置标志，真正的串口操作在 AT 任务里（界面不阻塞） */
 static void start_scan(void)
 {
-    lv_obj_set_style_text_color(dd_ssid, lv_color_hex(C_TEXT), 0);
-    lv_dropdown_set_options(dd_ssid, "扫描...");
-    lv_dropdown_set_selected(dd_ssid, 0);
-    last_scan_state = WIFI_SCAN_RUNNING;
-    wifi_scan_state = WIFI_SCAN_RUNNING;
+    wifi_scan_state   = WIFI_SCAN_RUNNING;
     wifi_scan_request = 1;
-    scan_start_tick  = HAL_GetTick();
-    timeout_shown    = 0;
+    last_scan_state   = WIFI_SCAN_RUNNING;
+    scan_start_tick   = HAL_GetTick();
+    timeout_shown     = 0;
 }
 
-static void btn_scan_click(lv_event_t *e)
+/* ============================================================
+ *  模态热点列表
+ * ============================================================ */
+
+static void modal_row_click(lv_event_t *e);   /* 前向声明：行工厂里要用 */
+
+/* 提示行（扫描中 / 无热点 / 扫描失败 / 扫描超时） */
+static void modal_plain_row(const char *txt, uint32_t color)
+{
+    lv_obj_t *row = lv_obj_create(modal_list);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), AP_ROW_H);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *lab = lv_label_create(row);
+    lv_label_set_text(lab, txt);
+    lv_obj_set_style_text_font(lab, UI_FONT_CJK, 0);
+    lv_obj_set_style_text_color(lab, lv_color_hex(color), 0);
+    lv_obj_align(lab, LV_ALIGN_LEFT_MID, 8, 0);
+}
+
+/* 一个热点行：左 SSID（中文/ASCII 都走 CJK 字体），右信号 dBm。
+ * 选中的那个（与输入框内容一致）用亮一档的底色标出来。 */
+static void modal_ap_row(const char *ssid, int8_t rssi, uint8_t selected)
+{
+    char buf[16];
+
+    lv_obj_t *row = lv_btn_create(modal_list);
+    lv_obj_set_size(row, LV_PCT(100), AP_ROW_H);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+    ui_style_btn(row, selected ? 0x475569 : C_TRACK, C_TEXT);
+
+    lv_obj_t *l = lv_label_create(row);            /* 子标签 0 = SSID（点击回调从它取） */
+    lv_label_set_text(l, ssid);
+    lv_obj_set_style_text_font(l, UI_FONT_CJK, 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
+    lv_obj_align(l, LV_ALIGN_LEFT_MID, 8, 0);
+
+    if (rssi != -127) snprintf(buf, sizeof buf, "%d", (int)rssi);
+    else              snprintf(buf, sizeof buf, "--");
+    lv_obj_t *r = lv_label_create(row);
+    lv_label_set_text(r, buf);
+    lv_obj_set_style_text_font(r, UI_FONT_ASCII, 0);
+    lv_obj_set_style_text_color(r, lv_color_hex(selected ? C_TEXT : C_DIM), 0);
+    lv_obj_align(r, LV_ALIGN_RIGHT_MID, -8, 0);
+
+    lv_obj_add_event_cb(row, modal_row_click, LV_EVENT_CLICKED, NULL);
+}
+
+/* 按当前扫描状态重建列表。只在"状态变化 / 开窗"时调用，别每 500ms 重建
+ * （每次重建都要删建十几个对象，白烧 LVGL 堆）。 */
+static void modal_refresh(void)
+{
+    if (modal_list == NULL) return;
+    lv_obj_clean(modal_list);
+
+    if (wifi_scan_state == WIFI_SCAN_RUNNING) { modal_plain_row("扫描中...", C_BLUE); return; }
+    if (wifi_scan_state == WIFI_SCAN_FAIL)    { modal_plain_row("扫描失败",  C_WARN); return; }
+    if (wifi_ap_count == 0)                   { modal_plain_row("无热点",    C_WARN); return; }
+
+    const char *cur = lv_textarea_get_text(ta_ssid);
+    for (int i = 0; i < wifi_ap_count && i < WIFI_AP_MAX; i++)
+        modal_ap_row(wifi_ap_list[i], wifi_ap_rssi[i],
+                     (cur[0] != 0) && (strcmp(cur, wifi_ap_list[i]) == 0));
+}
+
+/* 点行 → 选择该热点：填入输入框 + 关窗 + 焦点去密码框 */
+static void modal_row_click(lv_event_t *e)
+{
+    lv_obj_t *row = lv_event_get_target(e);
+    lv_obj_t *lab = lv_obj_get_child(row, 0);       /* 子标签 0 = SSID 文本（标签自己持有副本） */
+    if (lab == NULL) return;
+
+    lv_textarea_set_text(ta_ssid, lv_label_get_text(lab));
+    lv_obj_add_flag(modal, LV_OBJ_FLAG_HIDDEN);     /* 选完就关，别挡着输密码 */
+    focus_ta(ta_pass);
+}
+
+/* 点面板外的压暗区 / 点 ✕ 都关窗（面板本身 clickable，点它不会冒泡到这里） */
+static void modal_close_cb(lv_event_t *e)
 {
     (void)e;
-    if (!mode_list) set_mode(1);   /* 自定义模式下点刷新 = 回到列表并重扫 */
-    start_scan();
+    lv_obj_add_flag(modal, LV_OBJ_FLAG_HIDDEN);
 }
 
-/* 扫描完成：把结果拼成下拉选项（LVGL 选项即换行分隔），首行是占位行 */
-static void fill_ap_options(void)
+static void btn_rescan_click(lv_event_t *e)
 {
-    static char opts[WIFI_AP_MAX * 34 + 16];
-    int i, off = 0;
+    (void)e;
+    start_scan();
+    modal_refresh();                                /* 立刻切到"扫描中..." */
+}
 
-    off += snprintf(opts + off, sizeof(opts) - off, "%s\n", OPT_PLACEHOLDER);
-    for (i = 0; i < wifi_ap_count && i < WIFI_AP_MAX; i++)
-        off += snprintf(opts + off, sizeof(opts) - off, "%s\n", wifi_ap_list[i]);
-    if (off > 0) opts[off - 1] = 0;               /* 去掉末尾换行 */
+static void modal_create(void)
+{
+    modal = lv_obj_create(scr_wifi);
+    lv_obj_remove_style_all(modal);
+    lv_obj_set_size(modal, 320, 240);
+    lv_obj_align(modal, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_set_style_bg_color(modal, lv_color_hex(C_DARK), 0);
+    lv_obj_set_style_bg_opa(modal, LV_OPA_80, 0);       /* 压暗背景 */
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(modal, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(modal, modal_close_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_dropdown_set_options(dd_ssid, opts);
-    lv_dropdown_set_selected(dd_ssid, 0);
-    lv_obj_set_style_text_color(dd_ssid, lv_color_hex(C_TEXT), 0);
+    lv_obj_t *panel = lv_obj_create(modal);
+    lv_obj_set_size(panel, 300, 196);
+    lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 22);
+    ui_style_card(panel, true);
+    lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);      /* 吞掉点击：点面板不该关窗（无需回调） */
+
+    lv_obj_t *title = lv_label_create(panel);
+    lv_label_set_text(title, "WiFi 列表");
+    lv_obj_set_style_text_font(title, UI_FONT_CJK, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 10, 8);
+
+    lv_obj_t *btn_rf = lv_btn_create(panel);
+    lv_obj_set_size(btn_rf, 56, 24);
+    lv_obj_align(btn_rf, LV_ALIGN_TOP_RIGHT, -42, 6);
+    ui_style_btn(btn_rf, C_TRACK, C_TEXT);
+    lv_obj_t *lab_rf = lv_label_create(btn_rf);
+    lv_label_set_text(lab_rf, "刷新");
+    lv_obj_set_style_text_font(lab_rf, UI_FONT_CJK, 0);
+    lv_obj_center(lab_rf);
+    lv_obj_add_event_cb(btn_rf, btn_rescan_click, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *btn_x = lv_btn_create(panel);
+    lv_obj_set_size(btn_x, 30, 24);
+    lv_obj_align(btn_x, LV_ALIGN_TOP_RIGHT, -6, 6);
+    ui_style_btn(btn_x, C_TRACK, C_TEXT);
+    lv_obj_t *lab_x = lv_label_create(btn_x);
+    lv_label_set_text(lab_x, LV_SYMBOL_CLOSE);          /* 图标：必须 montserrat */
+    lv_obj_set_style_text_font(lab_x, UI_FONT_ASCII, 0);
+    lv_obj_center(lab_x);
+    lv_obj_add_event_cb(btn_x, modal_close_cb, LV_EVENT_CLICKED, NULL);
+
+    modal_list = lv_obj_create(panel);
+    lv_obj_set_size(modal_list, 288, 150);
+    lv_obj_align(modal_list, LV_ALIGN_TOP_MID, 0, 34);
+    lv_obj_set_style_bg_color(modal_list, lv_color_hex(C_DARK), 0);
+    lv_obj_set_style_bg_opa(modal_list, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(modal_list, 6, 0);
+    lv_obj_set_style_border_width(modal_list, 0, 0);
+    lv_obj_set_style_pad_all(modal_list, 2, 0);
+    lv_obj_set_style_pad_row(modal_list, 2, 0);
+    lv_obj_set_flex_flow(modal_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_scrollbar_mode(modal_list, LV_SCROLLBAR_MODE_AUTO);
+}
+
+static void modal_open(void)
+{
+    if (modal == NULL) modal_create();
+    lv_obj_clear_flag(modal, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(modal);              /* 盖在页面所有控件之上 */
+
+    /* 没结果、或结果太旧 → 重扫一次，保证打开看到的是新鲜的 */
+    if (wifi_ap_count == 0 || (HAL_GetTick() - scan_start_tick) > SCAN_FRESH_MS)
+        start_scan();
+
+    modal_refresh();
+}
+
+static void btn_list_click(lv_event_t *e)
+{
+    (void)e;
+    modal_open();
 }
 
 static void btn_connect_click(lv_event_t *e)
@@ -116,7 +241,7 @@ static void btn_connect_click(lv_event_t *e)
     const char *ssid = lv_textarea_get_text(ta_ssid);
     const char *pass = lv_textarea_get_text(ta_pass);
 
-    if (ssid[0] == 0) {                      /* 没选热点也没手打 SSID */
+    if (ssid[0] == 0) {                      /* 没选热点也没手输 SSID */
         set_status("NO SSID", C_FAIL);
         return;
     }
@@ -128,7 +253,7 @@ static void btn_connect_click(lv_event_t *e)
 }
 
 /* 500ms 状态轮询（仅本页可见时刷新）
- * 1) 扫描状态 → 下拉框文案（下拉自己就是扫描进度指示）
+ * 1) 扫描状态变化 → 重建弹窗列表；扫太久（>25s）给个"扫描超时"提示
  * 2) 连接状态四态，优先级：Connecting > WiFi FAIL > NO CLOUD > WiFi OK。
  *    Connecting 能贯穿全程的原因：wifi_reconnect_request 从 UI 置 1 起，
  *    直到 AT 任务把"退网→连新 WiFi→TCP→MQTT"整个重连流程跑完才清 0。 */
@@ -137,39 +262,23 @@ static void wifi_timer_cb(lv_timer_t *t)
     (void)t;
     if (lv_scr_act() != scr_wifi) return;
 
+    uint8_t modal_shown = (modal != NULL) && !lv_obj_has_flag(modal, LV_OBJ_FLAG_HIDDEN);
+
     if (wifi_scan_state != last_scan_state)
     {
         last_scan_state = wifi_scan_state;
         timeout_shown   = 0;
-        if (wifi_scan_state == WIFI_SCAN_DONE)
-        {
-            if (wifi_ap_count == 0)
-            {
-                lv_dropdown_set_options(dd_ssid, "无热点");     /* 应答正常，只是附近没扫到 */
-                lv_dropdown_set_selected(dd_ssid, 0);
-            }
-            else
-            {
-                fill_ap_options();
-            }
-            if (!mode_list) set_mode(1);      /* 手打模式下重扫成功 → 回到列表 */
-        }
-        else if (wifi_scan_state == WIFI_SCAN_FAIL)
-        {
-            lv_dropdown_set_options(dd_ssid, "扫描失败");
-            lv_dropdown_set_selected(dd_ssid, 0);
-            lv_obj_set_style_text_color(dd_ssid, lv_color_hex(C_WARN), 0);
-        }
+        if (modal_shown) modal_refresh();
     }
-    else if (wifi_scan_state == WIFI_SCAN_RUNNING && !timeout_shown &&
+    else if (modal_shown && !timeout_shown &&
+             wifi_scan_state == WIFI_SCAN_RUNNING &&
              (HAL_GetTick() - scan_start_tick) > 25000)
     {
         /* AT 任务可能正卡在整轮重连里：只提示，不动共享状态 ——
          * 等它真扫完（DONE/FAIL）上面的分支会照常刷新列表 */
         timeout_shown = 1;
-        lv_dropdown_set_options(dd_ssid, "扫描超时");
-        lv_dropdown_set_selected(dd_ssid, 0);
-        lv_obj_set_style_text_color(dd_ssid, lv_color_hex(C_WARN), 0);
+        lv_obj_clean(modal_list);
+        modal_plain_row("扫描超时", C_WARN);
     }
 
     if (wifi_reconnect_request)
@@ -194,7 +303,7 @@ static void wifi_timer_cb(lv_timer_t *t)
     }
 }
 
-/* 小工具：造一个带中文字体的按钮 */
+/* 小工具：带中文字体的按钮 */
 static lv_obj_t *make_btn(lv_obj_t *parent, int w, int h, int x, int y,
                           uint32_t bg, const char *text)
 {
@@ -219,15 +328,7 @@ void page_wifi_open(void)
         ui_style_screen(scr_wifi);
         ui_title_bar(scr_wifi, "WiFi 配置", btn_back, UI_FONT_CJK);
 
-        /* ---- 第 1 行：热点选择器（下拉）⇄ 自定义 SSID 输入框 + 刷新 ---- */
-        dd_ssid = lv_dropdown_create(scr_wifi);
-        lv_obj_set_size(dd_ssid, 198, 30);
-        lv_obj_align(dd_ssid, LV_ALIGN_TOP_LEFT, 6, 42);
-        ui_style_dropdown(dd_ssid);
-        lv_dropdown_set_options(dd_ssid, OPT_PLACEHOLDER);
-        lv_dropdown_set_selected_highlight(dd_ssid, true);
-        lv_obj_add_event_cb(dd_ssid, dd_ssid_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
+        /* ---- 第 1 行：SSID 输入框（常驻可手输）+ 「WiFi 列表」选择器 ---- */
         ta_ssid = lv_textarea_create(scr_wifi);
         lv_obj_set_size(ta_ssid, 198, 30);
         lv_obj_align(ta_ssid, LV_ALIGN_TOP_LEFT, 6, 42);
@@ -236,14 +337,13 @@ void page_wifi_open(void)
         lv_textarea_set_placeholder_text(ta_ssid, "SSID");
         ui_style_textarea(ta_ssid);
         lv_obj_add_event_cb(ta_ssid, ta_focus_cb, LV_EVENT_FOCUSED, NULL);
-        lv_obj_add_flag(ta_ssid, LV_OBJ_FLAG_HIDDEN);   /* 默认手打框不出现 */
 
-        btn_scan = make_btn(scr_wifi, 104, 30, 210, 42, C_TRACK, "刷新");
-        lv_obj_add_event_cb(btn_scan, btn_scan_click, LV_EVENT_CLICKED, NULL);
+        lv_obj_t *btn_list = make_btn(scr_wifi, 104, 30, 210, 42, C_TRACK, "WiFi 列表");
+        lv_obj_add_event_cb(btn_list, btn_list_click, LV_EVENT_CLICKED, NULL);
 
-        /* ---- 第 2 行：密码 + 手动输入/选择热点 切换 ---- */
+        /* ---- 第 2 行：密码（整行 —— 省下的宽度全给输入） ---- */
         ta_pass = lv_textarea_create(scr_wifi);
-        lv_obj_set_size(ta_pass, 198, 30);
+        lv_obj_set_size(ta_pass, 300, 30);
         lv_obj_align(ta_pass, LV_ALIGN_TOP_LEFT, 6, 76);
         lv_textarea_set_one_line(ta_pass, true);
         lv_textarea_set_password_mode(ta_pass, true);
@@ -251,10 +351,6 @@ void page_wifi_open(void)
         lv_textarea_set_placeholder_text(ta_pass, "密码");
         ui_style_textarea(ta_pass);
         lv_obj_add_event_cb(ta_pass, ta_focus_cb, LV_EVENT_FOCUSED, NULL);
-
-        btn_mode = make_btn(scr_wifi, 104, 30, 210, 76, C_TRACK, "手动输入");
-        lab_mode = lv_obj_get_child(btn_mode, 0);
-        lv_obj_add_event_cb(btn_mode, btn_mode_click, LV_EVENT_CLICKED, NULL);
 
         /* ---- 第 3 行：连接 + 状态 ---- */
         btn_conn = make_btn(scr_wifi, 198, 30, 6, 110, C_BLUE, "连接");
@@ -272,16 +368,15 @@ void page_wifi_open(void)
         lv_obj_set_size(kb, 320, 92);
         lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
         ui_style_keyboard(kb);
-        lv_keyboard_set_textarea(kb, ta_pass);
 
-        /* 预填当前凭据：来自 W25Q 存档（设置页保存过）或编译期默认。
-         * 注意 ta_ssid 在列表模式下是隐藏的，但始终是"要连的 SSID"的载体。 */
+        /* 预填当前凭据（W25Q 存档或编译期默认），方便只改其中一项 */
         wifi_conn_get(ssid, sizeof ssid, pass, sizeof pass);
         lv_textarea_set_text(ta_ssid, ssid);
         lv_textarea_set_text(ta_pass, pass);
+        focus_ta(ta_pass);            /* 就绪在密码框，一进来打字就进密码 */
 
         wifi_timer = lv_timer_create(wifi_timer_cb, 500, NULL);
-        start_scan();          /* 进页面自动扫一次，省掉"先点扫描"这一步 */
+        start_scan();                 /* 进页面先扫一次，「WiFi 列表」打开即有内容 */
     }
     lv_scr_load(scr_wifi);
 }

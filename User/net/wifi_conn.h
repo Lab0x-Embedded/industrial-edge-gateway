@@ -34,6 +34,7 @@ extern volatile uint8_t wifi_scan_request;   /* UI 置 1：请求一次扫描 */
 extern volatile uint8_t wifi_scan_state;     /* 上面四态，UI 轮询 */
 extern volatile uint8_t wifi_ap_count;       /* 扫描结果条数 */
 extern char             wifi_ap_list[WIFI_AP_MAX][33];
+extern int8_t           wifi_ap_rssi[WIFI_AP_MAX];  /* 与 wifi_ap_list 一一对应，dBm（-127=未知） */
 
 void wifi_conn_load(void);                                        /* 上电装载存档（幂等） */
 void wifi_conn_get(char *ssid, size_t n_ssid, char *pass, size_t n_pass);

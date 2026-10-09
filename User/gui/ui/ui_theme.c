@@ -86,53 +86,12 @@ void ui_style_keyboard(lv_obj_t *kb)
     lv_obj_set_style_text_color(kb, lv_color_hex(C_TEXT), LV_PART_ITEMS | LV_STATE_CHECKED);
 }
 
-/* 下拉框：本体 + 弹出列表都要打。
- * 为什么必须分开打：弹出列表不是下拉框的子对象（lv_dropdown.c 里
- * 把它挂到屏幕下、并 reparent 到最上层），样式不从下拉框继承；
- * 只改本体的话，点开的列表还是默认浅色主题那份"白底黑字"。
- * 行高 = 字体行高 + LV_PART_SELECTED 的 text_line_space，
- * 高亮行底色是 LV_PART_SELECTED 画的矩形 —— 320x240 触屏上
- * 行高给到 ~28px 才好点。
- * 坑（踩过）：高亮矩形的位置是 draw_box 用 **LV_PART_SELECTED 的字体行高**
- * 算的（id * (font_h + line_space)），而列表里的文字是子标签用
- * **LV_PART_MAIN 的字体 + 继承下来的 line_space** 画的。两处理论上必须同字体、
- * 同行距，否则第二行起高亮就错行；列表高度还要 max_height 夹住，否则 13 个
- * 选项会顶出屏幕（列表本身可滚动）。 */
-void ui_style_dropdown(lv_obj_t *dd)
-{
-    lv_obj_set_style_bg_color(dd, lv_color_hex(C_CARD), 0);
-    lv_obj_set_style_bg_opa(dd, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(dd, lv_color_hex(C_TRACK), 0);
-    lv_obj_set_style_border_width(dd, 1, 0);
-    lv_obj_set_style_radius(dd, 6, 0);
-    lv_obj_set_style_pad_left(dd, 8, 0);
-    lv_obj_set_style_text_color(dd, lv_color_hex(C_TEXT), 0);
-    lv_obj_set_style_text_font(dd, UI_FONT_CJK, 0);
-    lv_obj_set_style_shadow_width(dd, 0, 0);
-    lv_obj_set_style_bg_color(dd, lv_color_hex(C_TRACK), LV_PART_INDICATOR);
+/* 下拉框样式已随 WiFi 页改造成模态列表而删除（工程里不再用 lv_dropdown）。
+ * LVGL 那条坑保留在这里备查：弹出列表是独立对象（lv_dropdown_get_list()），
+ * 样式不从下拉框继承，本体和列表都要打；高亮行位置按 LV_PART_SELECTED 的
+ * 字体行高算（id*(font_h+line_space)），必须与 LV_PART_MAIN 同字体同行距。 */
 
-    lv_obj_t *list = lv_dropdown_get_list(dd);       /* 独立对象，必须单独打 */
-    if (list == NULL) return;
 
-    lv_obj_set_style_bg_color(list, lv_color_hex(C_CARD), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_color(list, lv_color_hex(C_TRACK), LV_PART_MAIN);
-    lv_obj_set_style_border_width(list, 1, LV_PART_MAIN);
-    lv_obj_set_style_radius(list, 8, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(list, 6, LV_PART_MAIN);
-    lv_obj_set_style_text_color(list, lv_color_hex(C_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(list, UI_FONT_CJK, LV_PART_MAIN);
-    lv_obj_set_style_text_line_space(list, 12, LV_PART_MAIN);   /* 标签行距（子标签继承） */
-    lv_obj_set_style_shadow_width(list, 0, LV_PART_MAIN);
-    lv_obj_set_style_max_height(list, 190, LV_PART_MAIN);       /* 顶到底就滚动，别顶出屏幕 */
-
-    lv_obj_set_style_bg_color(list, lv_color_hex(C_BLUE), LV_PART_SELECTED);
-    lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SELECTED);
-    lv_obj_set_style_radius(list, 6, LV_PART_SELECTED);
-    lv_obj_set_style_text_color(list, lv_color_hex(C_DARK), LV_PART_SELECTED);
-    lv_obj_set_style_text_font(list, UI_FONT_CJK, LV_PART_SELECTED);      /* 与 MAIN 同字体 */
-    lv_obj_set_style_text_line_space(list, 12, LV_PART_SELECTED);         /* 与 MAIN 同行距 */
-}
 
 void ui_title_bar(lv_obj_t *scr, const char *title,
                   void (*back_cb)(void), const lv_font_t *font)

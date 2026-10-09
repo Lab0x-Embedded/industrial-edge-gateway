@@ -15,6 +15,7 @@
 #include "semphr.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>     /* atoi：解析 CWLAP 应答里的 rssi */
 
 /* —— 凭据存档：W25Q 参数扇区（0xF00000 是触摸校准，相邻互不影响）—— */
 #define WIFI_CFG_ADDR   0x00F01000UL
@@ -40,6 +41,7 @@ volatile uint8_t wifi_scan_request = 0;
 volatile uint8_t wifi_scan_state = WIFI_SCAN_IDLE;
 volatile uint8_t wifi_ap_count = 0;
 char             wifi_ap_list[WIFI_AP_MAX][33];
+int8_t           wifi_ap_rssi[WIFI_AP_MAX];
 
 void wifi_conn_load(void)
 {
@@ -262,27 +264,56 @@ int wifi_scan_locked(void)
         return -3;
     }
 
-    /* 解析 +CWLAP:(ecn,"ssid",rssi,...)，同名去重 */
+    /* 解析 +CWLAP:(ecn,"ssid",rssi,mac,ch,freq)，同名去重 + 取强的那条 */
     char *p = buf;
     while (cnt < WIFI_AP_MAX && (p = strstr(p, "+CWLAP:(")) != NULL) {
         char *q = strchr(p + 8, '"');
         if (!q) break;
         char *e = strchr(q + 1, '"');
         if (!e) break;
+
+        /* 闭引号后面紧跟 ",rssi" —— 顺手取信号强度：面板里要按强度排序、
+         * 显示 dBm。解析不到（脏数据/固件格式不同）记 -127，排到最后。 */
+        int rssi = -127;
+        if (*(e + 1) == ',')
+            rssi = atoi(e + 2);
+        if (rssi > 0 || rssi < -127)
+            rssi = -127;
+
         size_t len = (size_t)(e - q - 1);
         if (len > 0 && len < 33) {
             char ssid[33];
             memcpy(ssid, q + 1, len);
             ssid[len] = 0;
-            int dup = 0;
+
+            int dup = -1;
             for (int i = 0; i < cnt; i++)
-                if (strcmp(wifi_ap_list[i], ssid) == 0) { dup = 1; break; }
-            if (!dup) {
+                if (strcmp(wifi_ap_list[i], ssid) == 0) { dup = i; break; }
+
+            if (dup < 0) {
                 memcpy(wifi_ap_list[cnt], ssid, len + 1);
+                wifi_ap_rssi[cnt] = (int8_t)rssi;
                 cnt++;
+            } else if (rssi > wifi_ap_rssi[dup]) {
+                wifi_ap_rssi[dup] = (int8_t)rssi;
             }
         }
         p = e;
+    }
+
+    /* 按信号强度从强到弱排序（最多 12 条，插入排序足够）：
+     * 用户挑热点时最强的一般就是自己家那个，强的排前面省事。 */
+    for (int i = 1; i < cnt; i++) {
+        char  key[33];
+        int8_t key_rssi = wifi_ap_rssi[i];
+        int   j;
+        memcpy(key, wifi_ap_list[i], sizeof key);
+        for (j = i - 1; j >= 0 && wifi_ap_rssi[j] < key_rssi; j--) {
+            memcpy(wifi_ap_list[j + 1], wifi_ap_list[j], sizeof key);
+            wifi_ap_rssi[j + 1] = wifi_ap_rssi[j];
+        }
+        memcpy(wifi_ap_list[j + 1], key, sizeof key);
+        wifi_ap_rssi[j + 1] = key_rssi;
     }
 
     if (cnt == 0)

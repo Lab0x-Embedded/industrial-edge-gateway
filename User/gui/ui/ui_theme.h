@@ -48,7 +48,10 @@ void ui_style_card(lv_obj_t *obj, bool border);            /* 卡片底 + 圆角
 void ui_style_btn(lv_obj_t *btn, uint32_t bg, uint32_t fg);/* 圆角 6 按钮，含按下/禁用态 */
 void ui_style_textarea(lv_obj_t *ta);                      /* 输入框 */
 void ui_style_keyboard(lv_obj_t *kb);                       /* 键盘（含按键/按下/大写态） */
-void ui_style_dropdown(lv_obj_t *dd);                      /* 下拉本体 **和弹出列表** */
+/* 注：原 ui_style_dropdown 已随 WiFi 页改造成模态列表而删除（工程里不再用 lv_dropdown）。
+ * 以后若还要用下拉框，记住两个坑：① 弹出列表是**独立对象**（lv_dropdown_get_list()），
+ * 样式不从下拉框继承，本体和列表都得打；② 高亮行的位置按 LV_PART_SELECTED 的字体行高算
+ * （id*(font_h+line_space)），必须与 LV_PART_MAIN 同字体同行距，否则第二行起错行。 */
 lv_obj_t *ui_add_kv_row(lv_obj_t *parent, const char *key,
                         const char *value, uint32_t value_color);  /* 返回右值标签 */
 
