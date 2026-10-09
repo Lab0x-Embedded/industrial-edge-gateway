@@ -284,10 +284,14 @@ void RE_MQTT_Init(void) {
     return;
   }
 
-  ESP_SendCmd_OK("AT+RST\r\n", 2000); /* 复位，退出异常透传/半连接状态 */
-  vTaskDelay(pdMS_TO_TICKS(1000));
-  ESP_SendCmd_OK("AT+RST\r\n", 2000);
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  ESP_SendCmd_OK("AT+RST\r\n", 2000);      /* 复位：退出异常透传/半连接状态 */
+  /* 复位后必须等模块真的起来（AT 固件 1~3s）。原来这里盲等 1s 就发 CWMODE/CWJAP，
+   * 指令落在启动窗口里被丢掉 → CWJAP 入不了网 → "点连接永远失败"。 */
+  if (wifi_at_wait_ready(8000) != 0) {
+    Log_Write(LOG_WARN, "reconnect: no AT after reset");
+    g_mqtt_connected = 0;
+    return;
+  }
 
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
   wifi_join();                      /* 失败原因由 wifi_join 自己写日志页 */

@@ -35,13 +35,6 @@ extern volatile uint8_t wifi_scan_state;     /* 上面四态，UI 轮询 */
 extern volatile uint8_t wifi_ap_count;       /* 扫描结果条数 */
 extern char             wifi_ap_list[WIFI_AP_MAX][33];
 extern int8_t           wifi_ap_rssi[WIFI_AP_MAX];  /* 与 wifi_ap_list 一一对应，dBm（-127=未知） */
-extern volatile int8_t  wifi_scan_code;              /* 上次扫描结果码：>=0 热点数；-1 无AT模式；-2 无应答；-3 CWLAP报错 */
-extern char             wifi_scan_raw[64];           /* 失败时抓到的一小段原始应答（可打印化），给屏幕自检用 */
-extern volatile uint8_t wifi_rx_armed;               /* 失败自检：当时 UART4 RX DMA 是否还挂着 */
-extern volatile uint8_t wifi_tx_err;                 /* 失败自检：发送是否报错 */
-extern volatile uint8_t wifi_re_bit;                 /* 失败自检：CR1 的 RE 位（0=外设侧接收被关了） */
-extern volatile uint8_t wifi_loop_ok;                /* 失败自检：片内读写通路（RingBuf_SelfTest）是否通过 */
-extern volatile uint32_t uart4_rx_bytes;             /* 开机以来 UART4 收到的总字节数（0=从没听见过模块） */
 
 void wifi_conn_load(void);                                        /* 上电装载存档（幂等） */
 void wifi_conn_get(char *ssid, size_t n_ssid, char *pass, size_t n_pass);
@@ -61,11 +54,13 @@ int  wifi_join(void);
  *                   否则会被当成 TCP 数据灌进连接里）。cloud.c 的连接流程也用它。
  * wifi_at_passthrough_enter：CIPMODE=1 + CIPSEND 恢复透传 —— 只有确认 TCP 在线时才调；
  *                   0=拿到 ">"（透传真的起来了），-1=没拿到（TCP 多半已断，
- *                   调用方应把 g_mqtt_connected 置 0 走重连，别再往串口灌 MQTT 字节）。 */
+ *                   调用方应把 g_mqtt_connected 置 0 走重连，别再往串口灌 MQTT 字节）。
+ * wifi_at_wait_ready：AT+RST 之后等模块重新应答（AT 固件要 1~3s），0=就绪、-1=超时。 */
 int  wifi_scan_locked(void);
 int  wifi_time_sync_locked(void);
 int  wifi_at_escape(void);
 int  wifi_at_passthrough_enter(void);
+int  wifi_at_wait_ready(uint32_t timeout_ms);
 
 extern volatile uint8_t wifi_connected;       /* 已连上 AP */
 extern char             g_esp_ip[16];         /* AT+CIFSR 结果，"--"=未获取 */

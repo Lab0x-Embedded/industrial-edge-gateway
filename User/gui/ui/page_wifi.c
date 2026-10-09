@@ -14,7 +14,6 @@
 #include "page_settings.h"
 #include "ui_theme.h"
 #include "wifi_conn.h"
-#include "esp_uart.h"      /* uart4_rx_drop_bytes / uart4_rx_rst_fail：自检行要用 */
 #include "tasks.h"
 #include "stm32f4xx.h"
 #include <stdio.h>
@@ -117,68 +116,6 @@ static void modal_ap_row(const char *ssid, int8_t rssi, uint8_t selected)
     lv_obj_add_event_cb(row, modal_row_click, LV_EVENT_CLICKED, NULL);
 }
 
-/* 失败原因直接显示在屏幕上（ASCII 英文，不用翻日志页）：
- *  -1 = 模块连 AT 都不回（模块没工作/波特率/接线）
- *  -2 = 退出了透传但 CWLAP 一个字节没回
- *  -3 = 模块明确回 ERROR（原文在日志页 resp: 那句里） */
-static const char *scan_fail_text(void)
-{
-    switch (wifi_scan_code) {
-        case -1: return "FAIL: no AT (module ?)";
-        case -2: return "FAIL: no reply";
-        case -3: return "FAIL: CWLAP err (log)";
-        default: return "FAIL";
-    }
-}
-
-/* 自检行（两行）：用来区分"模块不吭声"和"我们听不见模块"，并直接坐实/排除
- * 环缓冲溢出这条路：
- *   RX:ok/DEAD   → UART4 接收 DMA 还挂着吗（DEAD = HAL 出错后 DMA 被中止）
- *   TX:ok/err    → 发送是否报错（HAL_UART_Transmit 返回值）
- *   DROP / RST   → 缓冲满被丢弃的字节数 / DMA 重启失败次数（都是 0 = 排除该路径） */
-static void modal_show_selftest(void)
-{
-    char t[64];
-
-    /* 行 1：收发状态 + 外设 RE 位（RE:0 = 接收移位器被关了，线上有数据也进不来） */
-    snprintf(t, sizeof(t), "RX:%s RE:%d TX:%s",
-             wifi_rx_armed ? "ok" : "DEAD", (int)wifi_re_bit,
-             wifi_tx_err   ? "err" : "ok");
-    modal_plain_row(t, (wifi_rx_armed && wifi_re_bit && !wifi_tx_err) ? C_DIM : C_WARN);
-
-    /* 行 2：开机以来收到的总字节数 + 缓冲丢弃 / DMA 重启失败。
-     * RXB:0 = 开机到现在模块一个字节都没送来（决定性判据）。 */
-    snprintf(t, sizeof(t), "RXB:%lu DROP:%lu RST:%lu",
-             (unsigned long)uart4_rx_bytes, (unsigned long)uart4_rx_drop_bytes,
-             (unsigned long)uart4_rx_rst_fail);
-    modal_plain_row(t, (uart4_rx_bytes == 0 || uart4_rx_drop_bytes || uart4_rx_rst_fail)
-                       ? C_WARN : C_DIM);
-
-    /* 行 3：片内读写通路自检。ok 而 RXB 不动 → 故障在板外（模块/接线/供电） */
-    snprintf(t, sizeof(t), "LOOP:%s", wifi_loop_ok ? "ok" : "fail");
-    modal_plain_row(t, wifi_loop_ok ? C_DIM : C_WARN);
-}
-
-/* 失败时把抓到的原始字节摊到屏幕上（最多两行 × 34 字符）。
- * 这是排查"模块到底在说什么"最直接的证据：
- *   没显示任何字节 / (nothing) → 模块根本没在跟我们说话
- *   busy p...                  → 模块在忙（上一次操作没收尾）
- *   乱码点号串                   → 波特率对不上
- *   +IPD 之类                   → 还在透传（+++ 没生效） */
-static void modal_show_raw(void)
-{
-    const char *r = wifi_scan_raw;
-    if (!r[0]) { modal_plain_row("RAW: (nothing)", C_DIM); return; }
-
-    for (int row = 0; row < 2 && *r; row++) {
-        char t[52];
-        int k = snprintf(t, sizeof(t), "RAW%d: ", row + 1);
-        for (int i = 0; i < 34 && *r; i++) t[k++] = *r++;
-        t[k] = 0;
-        modal_plain_row(t, C_DIM);
-    }
-}
-
 /* 按当前扫描状态重建列表。只在"状态变化 / 开窗"时调用，别每 500ms 重建
  * （每次重建都要删建十几个对象，白烧 LVGL 堆）。 */
 static void modal_refresh(void)
@@ -187,12 +124,7 @@ static void modal_refresh(void)
     lv_obj_clean(modal_list);
 
     if (wifi_scan_state == WIFI_SCAN_RUNNING) { modal_plain_row("扫描中...", C_BLUE); return; }
-    if (wifi_scan_state == WIFI_SCAN_FAIL)    {
-        modal_plain_row(scan_fail_text(), C_WARN);
-        modal_show_selftest();          /* RX/TX 自检：区分"模块不吭声"和"我们听不见" */
-        modal_show_raw();               /* 模块原始应答（空 = 它没说话） */
-        return;
-    }
+    if (wifi_scan_state == WIFI_SCAN_FAIL)    { modal_plain_row("扫描失败",  C_WARN); return; }
     if (wifi_ap_count == 0)                   { modal_plain_row("无热点",    C_WARN); return; }
 
     const char *cur = lv_textarea_get_text(ta_ssid);
@@ -352,7 +284,7 @@ static void wifi_timer_cb(lv_timer_t *t)
          * 等它真扫完（DONE/FAIL）上面的分支会照常刷新列表 */
         timeout_shown = 1;
         lv_obj_clean(modal_list);
-        modal_plain_row("FAIL: timeout 25s", C_WARN);
+        modal_plain_row("扫描超时", C_WARN);
     }
 
     if (wifi_reconnect_request)
