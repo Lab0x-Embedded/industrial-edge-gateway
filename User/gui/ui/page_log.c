@@ -48,6 +48,11 @@ static void add_log_row(const char *txt, uint32_t color, const lv_font_t *font)
     lv_obj_set_style_text_font(lab, font, 0);
     lv_obj_set_style_text_color(lab, lv_color_hex(color), 0);
     lv_obj_align(lab, LV_ALIGN_LEFT_MID, 6, 0);
+    /* 超长行（如 OneNET 回执 JSON）横向滚动：标签必须限定宽度并设滚动模式，
+     * 否则标签撑到内容宽、被 16px 定高的行容器裁掉，看起来就是"断尾不滚"。
+     * 行宽没超的短行不会滚动，属正常。 */
+    lv_obj_set_width(lab, 280);
+    lv_label_set_long_mode(lab, LV_LABEL_LONG_SCROLL);
 }
 
 lv_obj_t *page_log_create(void)
