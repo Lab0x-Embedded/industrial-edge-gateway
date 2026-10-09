@@ -44,12 +44,18 @@ int  wifi_conn_save(const char *ssid, const char *pass);          /* 0=已写入
 int  wifi_join(void);
 
 /* —— 只能由 AT 任务在持 uart1_mutex 的上下文调用 ——
- * wifi_scan_locked：退透传 → AT+CWLAP → 解析去重填 wifi_ap_list → 恢复透传；
- *                   返回热点数，-1=没收到应答。
+ * wifi_scan_locked：退透传 → AT+CWLAP → 解析去重填 wifi_ap_list →（原在线则）恢复透传；
+ *                   返回热点数，负数见上面的失败码。
  * wifi_time_sync_locked：退透传 → CIPSNTPCFG + CIPSNTPTIME? → 解析并 Clock_SetTime；
- *                   0=已校时，-1/-2=失败（AT 固件不支持 / 应答异常）。 */
+ *                   0=已校时，-1/-2=失败（AT 固件不支持 / 应答异常）。
+ * wifi_at_escape：退出透传并**确认**进入 AT 指令模式（静默期 + 重试）；
+ *                   0=已在 AT 模式，-1=没应答（多半还在透传，此时别再发 AT 指令，
+ *                   否则会被当成 TCP 数据灌进连接里）。cloud.c 的连接流程也用它。
+ * wifi_at_passthrough_enter：CIPMODE=1 + CIPSEND 恢复透传 —— 只有确认 TCP 在线时才调。 */
 int  wifi_scan_locked(void);
 int  wifi_time_sync_locked(void);
+int  wifi_at_escape(void);
+void wifi_at_passthrough_enter(void);
 
 extern volatile uint8_t wifi_connected;       /* 已连上 AP */
 extern char             g_esp_ip[16];         /* AT+CIFSR 结果，"--"=未获取 */

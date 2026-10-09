@@ -8,6 +8,7 @@
 #include "cloud.h"      /* dbg_print */
 #include "log.h"        /* Log_Write */
 #include "clock.h"      /* Clock_SetTime：SNTP 校时 */
+#include "tasks.h"      /* g_mqtt_connected：扫描前后判断是否在线 */
 #include "stm32f4xx.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -45,7 +46,13 @@ void wifi_conn_load(void)
     WifiCfg_t c;
     if (creds_loaded) return;
     creds_loaded = 1;
+    /* 必须持 flash_mutex：SPI 事务（CS低→命令→数据→CS高）被别的任务从中间
+     * 打断就会双方报废（日志/缓存/触摸校准都在用同一颗 W25Q，见手册 #18）。
+     * 这里漏了锁，后果很隐蔽：读回的是脏数据 → magic/校验不过 → 静默回落到
+     * 编译期默认凭据 → "WiFi 怎么都连不上"，因为设备一直在试一个不存在的 AP。 */
+    if (flash_mutex) xSemaphoreTake(flash_mutex, portMAX_DELAY);
     SPI_FLASH_BufferRead((uint8_t *)&c, WIFI_CFG_ADDR, sizeof c);
+    if (flash_mutex) xSemaphoreGive(flash_mutex);
     uint32_t sum = c.magic;
     for (size_t i = 0; i < sizeof c.ssid + sizeof c.pass; i++)
         sum += ((uint8_t *)c.ssid)[i];
@@ -65,9 +72,10 @@ void wifi_conn_get(char *ssid, size_t n_ssid, char *pass, size_t n_pass)
 int wifi_conn_save(const char *ssid, const char *pass)
 {
     size_t sl = strlen(ssid), pl = strlen(pass);
+    char msg[80];
     if (sl == 0 || sl > 32 || pl > 64) return -1;
 
-    WifiCfg_t c;
+    WifiCfg_t c, back;
     memset(&c, 0, sizeof c);
     c.magic = WIFI_CFG_MAGIC;
     memcpy(c.ssid, ssid, sl);  c.ssid[sl] = 0;
@@ -76,12 +84,29 @@ int wifi_conn_save(const char *ssid, const char *pass)
     for (size_t i = 0; i < sizeof c.ssid + sizeof c.pass; i++)
         c.sum += ((uint8_t *)c.ssid)[i];
 
+    /* 整段擦写都持 flash_mutex（与日志/缓存/触摸校准共用一颗 W25Q，手册 #18） */
+    if (flash_mutex) xSemaphoreTake(flash_mutex, portMAX_DELAY);
     SPI_FLASH_SectorErase(WIFI_CFG_ADDR);
     SPI_FLASH_BufferWrite((uint8_t *)&c, WIFI_CFG_ADDR, sizeof c);
+    SPI_FLASH_BufferRead((uint8_t *)&back, WIFI_CFG_ADDR, sizeof back);   /* 顺手回读 */
+    if (flash_mutex) xSemaphoreGive(flash_mutex);
+
+    /* 写完立刻校验：W25Q 的写失败是**静默**的（手册 #15：忙等超时 + 超时路径
+     * 不释放 CS → 后续写全被吞）。不回读就会出现"界面提示保存成功、设备其实
+     * 还在用编译期默认凭据"这种鬼故事 —— 现象就是怎么都连不上。 */
+    if (back.magic != WIFI_CFG_MAGIC || back.ssid[0] == 0 ||
+        back.sum != c.sum || strcmp(back.ssid, c.ssid) != 0 ||
+        strcmp(back.pass, c.pass) != 0)
+    {
+        Log_Write(LOG_ERROR, "wifi save verify FAIL");
+        return -2;
+    }
 
     memcpy(wifi_ssid, c.ssid, sizeof wifi_ssid);
     memcpy(wifi_pass, c.pass, sizeof wifi_pass);
     creds_loaded = 1;
+    snprintf(msg, sizeof msg, "wifi saved: %s", c.ssid);
+    Log_Write(LOG_INFO, msg);
     return 0;
 }
 
@@ -112,16 +137,26 @@ static void wifi_query_ip(void)
 int wifi_join(void)
 {
     char cmd[160];
+    char msg[80];
+    ESP_Status_t r;
     wifi_conn_load();
 
     snprintf(cmd, sizeof cmd, "AT+CWJAP=\"%s\",\"%s\"\r\n", wifi_ssid, wifi_pass);
-    if (ESP_SendCmd(cmd, "WIFI GOT IP", 5000) == ESP_OK) {
+    /* 超时 5s → 15s：CWJAP 要扫描+关联+DHCP，正常 3~8s，信号弱/路由器 DHCP 慢
+     * 时更久。5s 会在正常慢的情况下误判失败，而失败之后紧接着的 CIPSTART
+     * 必然连不上 —— 表现就是"偶尔/经常连不上"，且日志只有一句 join failed。 */
+    r = ESP_SendCmd(cmd, "WIFI GOT IP", 15000);
+    if (r == ESP_OK) {
         wifi_connected = 1;
         dbg_print("[NET] wifi OK\r\n");
         wifi_query_ip();
         return 1;
     }
     wifi_connected = 0;
+    /* 区分两种失败，现场能直接看日志页判断是"密码/SSID 错"还是"信号/超时" */
+    snprintf(msg, sizeof msg, r == ESP_ERROR ? "wifi denied: %s" : "wifi timeout: %s",
+             wifi_ssid);
+    Log_Write(LOG_WARN, msg);
     dbg_print("[NET] wifi join FAILED\r\n");
     return 0;
 }
@@ -137,7 +172,7 @@ int wifi_join(void)
  *  后面发的 CWLAP 也被当数据 → 用户看到"扫描失败"。实测这是最常见的失败原因，
  *  所以给两次机会，并在失败时把原因写进日志页（LOG_WARN）。
  * ============================================================ */
-static int at_exit_passthrough(void)
+static int at_exit_passthrough_impl(void)
 {
     for (int attempt = 0; attempt < 2; attempt++)
     {
@@ -155,7 +190,12 @@ static int at_exit_passthrough(void)
     return -1;
 }
 
-static void at_enter_passthrough(void)
+int wifi_at_escape(void)
+{
+    return at_exit_passthrough_impl();
+}
+
+void wifi_at_passthrough_enter(void)
 {
     ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000);
     ESP_SendCmd("AT+CIPSEND\r\n", ">", 3000);
@@ -174,10 +214,11 @@ int wifi_scan_locked(void)
 {
     static char buf[1024];          /* CWLAP 多热点应答可达 1KB+，不能放任务栈 */
     int n = 0, cnt = 0;
+    uint8_t was_online = g_mqtt_connected;   /* 扫描前是否在线：决定要不要恢复透传 */
 
     wifi_ap_count = 0;
 
-    if (at_exit_passthrough() != 0)
+    if (wifi_at_escape() != 0)
     {
         Log_Write(LOG_WARN, "scan FAIL: no AT mode");
         return -1;                  /* 没确认进入 AT 模式：此时多半还在透传，
@@ -201,7 +242,14 @@ int wifi_scan_locked(void)
     }
     buf[n] = 0;
 
-    at_enter_passthrough();
+    /* 只有"扫描前在线"才恢复透传。离线时模块本来就该留在 AT 模式，
+     * 这里若发 CIPMODE=1 + CIPSEND，模块进了透传却没有 TCP 连接，
+     * 之后 cloud.c 的 AT+CWJAP / AT+CIPSTART 会被当成 TCP 数据发出去，
+     * 模块再也收不到 AT 指令 —— 表现就是"怎么都连不上"（只能靠 AT+RST 救）。 */
+    if (was_online)
+        wifi_at_passthrough_enter();
+    else
+        RingBuf_Clear();
 
     if (n == 0)
     {
@@ -260,7 +308,7 @@ int wifi_time_sync_locked(void)
     char cmd[96];
 
     /* 退不出透传就别发校时指令：会被当成 TCP 数据吃掉，还可能污染 MQTT 流 */
-    if (at_exit_passthrough() != 0)
+    if (wifi_at_escape() != 0)
         return -1;
 
     snprintf(cmd, sizeof cmd, "AT+CIPSNTPCFG=1,%d,\"%s\"\r\n", SNTP_TIMEZONE, SNTP_SERVER);
@@ -276,7 +324,7 @@ int wifi_time_sync_locked(void)
     }
     buf[n] = 0;
 
-    at_enter_passthrough();
+    wifi_at_passthrough_enter();   /* 本函数只在线时被调用，恢复透传是安全的 */
 
     /* 应答形如： +CIPSNTPTIME:Fri Oct  9 12:34:56 2026
      * "+CIPSNTPTIME:" 之后第一个冒号就是"时:分:秒"的分隔符（星期/月份里没冒号） */

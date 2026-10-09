@@ -30,12 +30,16 @@ uint16_t readIndex = 0;
 uint16_t writeIndex = 0;
 
 /**
- * @brief  清空环形缓冲区（重置读写指针）
+ * @brief  清空环形缓冲区（丢弃未读数据）
+ *
+ * 只把读指针追到写指针，**不再把两个指针都归零**：
+ * 写指针属于中断那一侧，任务侧去改它会让两侧错位——中断接着按旧 writeIndex
+ * 写，任务却从 0 开始读，读到的就是"上次残留+新数据"的混合垃圾
+ * （AT 应答被读花的典型来源）。readIndex 是 16 位单次写入，Cortex-M 上原子。
  */
 void RingBuf_Clear(void)
 {
-    readIndex = 0;
-    writeIndex = 0;
+    readIndex = writeIndex;
 }
 
 /**
@@ -84,14 +88,24 @@ uint16_t Command_GetRemain() {
 }
 
 /**	不会覆盖旧数据 满后停止写入
-* @brief 向缓冲区写入数据
+* @brief 向缓冲区写入数据（**只能在接收中断里调用**：DMA 空闲回调）
 * @param data 要写入的数据指针
-* @param length 要写入的数据长度
+* @param len  要写入的数据长度
 * @return 写入的数据长度
+*
+* 为什么长度参数必须是 uint16_t：
+*   DMA 缓冲是 256 字节，空闲回调给的 Size 可以是 256；之前这里是 uint8_t，
+*   256 会被截断成 0 → 整块数据被丢（len==0 直接 return）。ESP 一口气连发
+*   1KB+（CWLAP 扫描应答、MQTT 下行）时，每满 256 字节就丢一块，表现就是
+*   "扫描/连接经常失败、应答收不全"。
+*
+* 为什么不再 osKernelLock：
+*   本函数只在中断上下文跑，CMSIS-RTOS2 的 osKernelLock 在 ISR 里是无效的
+*   （返回 osErrorISR，等于没加锁）。这里也不需要一个真锁：写指针只由中断
+*   这一侧推进，而且是在 memcpy 完成之后才发布 writeIndex，读者只会看到
+*   完整数据（单生产者/单消费者环形缓冲的标准用法）。
 */
-
-
-uint8_t Command_Write(uint8_t *data, uint8_t len)
+uint16_t Command_Write(uint8_t *data, uint16_t len)
 {
     // 入参校验
     if (data == NULL || len == 0)
@@ -101,7 +115,6 @@ uint8_t Command_Write(uint8_t *data, uint8_t len)
     if (remain < len)
         return 0;
 
-    osKernelLock();   // 进入临界区
 
     uint16_t idx = writeIndex;
     // 分段写入环形缓冲区
@@ -118,7 +131,6 @@ uint8_t Command_Write(uint8_t *data, uint8_t len)
         writeIndex = (len - part1) % BUFFER_SIZE;
     }
 
-    osKernelUnlock(); // 退出临界区
     return len;
 }
 

@@ -229,27 +229,28 @@ void MQTT_Init(void) {
   const CloudProfile *p = &profiles[CLOUD_TARGET];
   char cmd[96];
 
-  HAL_UART_Transmit(&huart4, (uint8_t *)"+++\r\n", 3, 100);
-  vTaskDelay(1000);
-
-  // 任意合法AT指令，完成模式切换（不操作TCP，安全无断连）
-  ESP_SendCmd_OK("AT\r\n", 2000);
-  vTaskDelay(200);
+  /* 退透传：带静默期 + 确认 + 重试（wifi_at_escape 内部实现）。
+   * 退不出来就**别往下发**——后面每条 AT 指令都会被当成 TCP 数据灌进连接，
+   * 模块再也收不到指令，表现就是"怎么都连不上"。 */
+  if (wifi_at_escape() != 0) {
+    Log_Write(LOG_WARN, "init: no AT mode");
+    g_mqtt_connected = 0;
+    return;
+  }
 
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
-  if (!wifi_join())
-    Log_Write(LOG_WARN, "wifi join failed");
+  wifi_join();                      /* 失败原因由 wifi_join 自己写日志页 */
   vTaskDelay(500);
 
   snprintf(cmd, sizeof cmd, "AT+CIPSTART=\"TCP\",\"%s\",%u\r\n", p->host,
            (unsigned)p->port);
-  ESP_SendCmd(cmd, "CONNECT", 2000);
+  /* 5s（原 2s 太短）：域名解析 + TCP 握手正常就要 1~3s，超时后照样往下走，
+   * 最后只能看到一句笼统的 connack failed，分不清是 TCP 没起来还是 MQTT 被拒。 */
+  if (ESP_SendCmd(cmd, "CONNECT", 5000) != ESP_OK)
+    Log_Write(LOG_WARN, "init: tcp fail");
   vTaskDelay(500);
 
-  // 进入透传模式
-  ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000);
-  // 启动透传
-  ESP_SendCmd("AT+CIPSEND\r\n", ">", 5000);
+  wifi_at_passthrough_enter();      /* CIPMODE=1 + CIPSEND */
   vTaskDelay(500);
   RingBuf_Clear();
 
@@ -270,8 +271,14 @@ void RE_MQTT_Init(void) {
   const CloudProfile *p = &profiles[CLOUD_TARGET];
   char cmd[96];
 
-  HAL_UART_Transmit(&huart4, (uint8_t *)"+++\r\n", 3, 100);
-  vTaskDelay(1000);
+  /* 先确认在 AT 指令模式：这里原本是裸发 "+++"（1s 保护时间，不确认是否退成功），
+   * 一旦退出失败，后面的 AT+RST 也会被当成透传数据 —— 重连彻底卡死，
+   * 每 10s 重复一次同样的失败，现场看就是"怎么都连不上"。 */
+  if (wifi_at_escape() != 0) {
+    Log_Write(LOG_WARN, "reconnect: no AT mode");
+    g_mqtt_connected = 0;
+    return;
+  }
 
   ESP_SendCmd_OK("AT+RST\r\n", 2000); /* 复位，退出异常透传/半连接状态 */
   vTaskDelay(pdMS_TO_TICKS(1000));
@@ -279,15 +286,13 @@ void RE_MQTT_Init(void) {
   vTaskDelay(pdMS_TO_TICKS(1000));
 
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
-  if (!wifi_join())
-    Log_Write(LOG_WARN, "reconnect: wifi failed");
+  wifi_join();                      /* 失败原因由 wifi_join 自己写日志页 */
   snprintf(cmd, sizeof cmd, "AT+CIPSTART=\"TCP\",\"%s\",%u\r\n", p->host,
            (unsigned)p->port);
   if (ESP_SendCmd(cmd, "CONNECT", 5000) != ESP_OK) {
     Log_Write(LOG_WARN, "reconnect: tcp failed");
   }
-  ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000);
-  ESP_SendCmd("AT+CIPSEND\r\n", ">", 5000);
+  wifi_at_passthrough_enter();
   vTaskDelay(500);
   RingBuf_Clear();
 
