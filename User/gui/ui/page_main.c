@@ -27,8 +27,8 @@ static lv_obj_t *make_gauge(lv_obj_t *parent, int32_t min, int32_t max,
                             uint32_t color, const char *name)
 {
     lv_obj_t *arc = lv_arc_create(parent);
-    lv_obj_set_size(arc, 130, 130);
     lv_obj_remove_style_all(arc);               /* 先清默认主题（含旋钮那套），再自绘 */
+    lv_obj_set_size(arc, 130, 130);             /* 顺序不能反：remove_style_all 会连尺寸一起删 */
     lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_arc_set_range(arc, min, max);
     lv_arc_set_bg_angles(arc, 135, 45);
@@ -60,11 +60,15 @@ lv_obj_t *page_main_create(void)
     lv_obj_t *scr = lv_obj_create(NULL);
     ui_style_screen(scr);
 
-    /* ---- 顶栏：中文标题居中 | 状态靠右 ---- */
+    /* ---- 顶栏：中文标题居中 | 状态靠右 ----
+     * 顺序坑：必须先 remove_style_all() 再 set_size()。
+     * 尺寸（WIDTH/HEIGHT）也是局部样式，先 set 后 remove 会把尺寸删掉，
+     * 对象就退回 lv_obj_class 的默认 130x130（LV_DPI_DEF）——
+     * 症状就是"顶栏变成屏幕中间一个方块、标题怎么调都不在它该在的地方"。 */
     lv_obj_t *top = lv_obj_create(scr);
+    lv_obj_remove_style_all(top);
     lv_obj_set_size(top, 320, 28);
     lv_obj_align(top, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_remove_style_all(top);
     lv_obj_set_style_bg_color(top, lv_color_hex(C_CARD), 0);
     lv_obj_set_style_bg_opa(top, LV_OPA_COVER, 0);
     lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);

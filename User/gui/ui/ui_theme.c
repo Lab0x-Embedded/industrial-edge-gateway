@@ -79,8 +79,11 @@ void ui_style_keyboard(lv_obj_t *kb)
     lv_obj_set_style_radius(kb, 4, LV_PART_ITEMS);
     lv_obj_set_style_shadow_width(kb, 0, LV_PART_ITEMS);
     lv_obj_set_style_bg_color(kb, lv_color_hex(C_BLUE), LV_PART_ITEMS | LV_STATE_PRESSED);
-    lv_obj_set_style_bg_color(kb, lv_color_hex(C_OK), LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_text_color(kb, lv_color_hex(C_DARK), LV_PART_ITEMS | LV_STATE_CHECKED);
+    /* 选中态（shift/大小写/1# 这些键在 LVGL 的 ctrl 表里默认带 CTRL_CHECKED，
+     * lv_keyboard.c:56-59）——原来给的是绿色，等于键盘上常驻一排绿键，很跳；
+     * 改成比普通键稍亮一档的石板灰，只表达"这键是状态键"。 */
+    lv_obj_set_style_bg_color(kb, lv_color_hex(0x475569), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(kb, lv_color_hex(C_TEXT), LV_PART_ITEMS | LV_STATE_CHECKED);
 }
 
 /* 下拉框：本体 + 弹出列表都要打。
