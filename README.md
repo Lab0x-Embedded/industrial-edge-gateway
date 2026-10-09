@@ -105,3 +105,7 @@ make reset / make openocd        # 复位 / 起 gdbserver
 **实时时间从哪来**：走时基于 HAL 时基（HSE 晶振精度，不用漂移大的 LSI）；联网成功后由 ESP8266 SNTP 校一次绝对时间；板上有 VBAT 电池时 RTC 备份域做断电保持。
 没校过时的钟显示为**暗色**（不假装是准的），连上云后自动变亮。
 色板与控件样式统一在 `User/gui/ui/ui_theme.h`，换主题只改这一个文件；中文字体是 `ui/font_cjk_14.c`（14px 抗锯齿，含界面用到的全部汉字 + ASCII，**不含 LV_SYMBOL_* 图标字形**——图标标签必须继续用 montserrat）。
+## 开源协议
+
+本项目以 [MIT](./LICENSE) 协议开源：使用/修改/分发自由，只需保留版权声明。
+第三方组件沿用其各自协议：STM32 HAL（BSD-3-Clause）、FreeRTOS（MIT）、LVGL（MIT）、CMSIS（Apache-2.0）。
