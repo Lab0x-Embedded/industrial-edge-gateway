@@ -11,6 +11,7 @@
 #include "ui_theme.h"
 #include "wifi_conn.h"
 #include "tasks.h"
+#include "stm32f4xx.h"
 #include <stdio.h>
 
 #define OPT_PLACEHOLDER  "选择热点"
@@ -21,6 +22,8 @@ static lv_obj_t *label_st, *dd_ssid, *kb;
 static lv_timer_t *wifi_timer = NULL;
 static uint8_t mode_list = 1;              /* 1=下拉选热点  0=手打 SSID */
 static uint8_t last_scan_state = WIFI_SCAN_IDLE;
+static uint8_t timeout_shown = 0;          /* 只影响界面提示，不动 AT 任务的共享状态 */
+static uint32_t scan_start_tick = 0;
 
 static void btn_back(void)
 {
@@ -80,6 +83,8 @@ static void start_scan(void)
     last_scan_state = WIFI_SCAN_RUNNING;
     wifi_scan_state = WIFI_SCAN_RUNNING;
     wifi_scan_request = 1;
+    scan_start_tick  = HAL_GetTick();
+    timeout_shown    = 0;
 }
 
 static void btn_scan_click(lv_event_t *e)
@@ -135,9 +140,18 @@ static void wifi_timer_cb(lv_timer_t *t)
     if (wifi_scan_state != last_scan_state)
     {
         last_scan_state = wifi_scan_state;
+        timeout_shown   = 0;
         if (wifi_scan_state == WIFI_SCAN_DONE)
         {
-            fill_ap_options();
+            if (wifi_ap_count == 0)
+            {
+                lv_dropdown_set_options(dd_ssid, "无热点");     /* 应答正常，只是附近没扫到 */
+                lv_dropdown_set_selected(dd_ssid, 0);
+            }
+            else
+            {
+                fill_ap_options();
+            }
             if (!mode_list) set_mode(1);      /* 手打模式下重扫成功 → 回到列表 */
         }
         else if (wifi_scan_state == WIFI_SCAN_FAIL)
@@ -146,6 +160,16 @@ static void wifi_timer_cb(lv_timer_t *t)
             lv_dropdown_set_selected(dd_ssid, 0);
             lv_obj_set_style_text_color(dd_ssid, lv_color_hex(C_WARN), 0);
         }
+    }
+    else if (wifi_scan_state == WIFI_SCAN_RUNNING && !timeout_shown &&
+             (HAL_GetTick() - scan_start_tick) > 25000)
+    {
+        /* AT 任务可能正卡在整轮重连里：只提示，不动共享状态 ——
+         * 等它真扫完（DONE/FAIL）上面的分支会照常刷新列表 */
+        timeout_shown = 1;
+        lv_dropdown_set_options(dd_ssid, "扫描超时");
+        lv_dropdown_set_selected(dd_ssid, 0);
+        lv_obj_set_style_text_color(dd_ssid, lv_color_hex(C_WARN), 0);
     }
 
     if (wifi_reconnect_request)

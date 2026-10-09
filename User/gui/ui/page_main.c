@@ -60,9 +60,9 @@ lv_obj_t *page_main_create(void)
     lv_obj_t *scr = lv_obj_create(NULL);
     ui_style_screen(scr);
 
-    /* ---- 顶栏：中文标题 | 状态 ---- */
+    /* ---- 顶栏：中文标题居中 | 状态靠右 ---- */
     lv_obj_t *top = lv_obj_create(scr);
-    lv_obj_set_size(top, 320, 26);
+    lv_obj_set_size(top, 320, 28);
     lv_obj_align(top, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_remove_style_all(top);
     lv_obj_set_style_bg_color(top, lv_color_hex(C_CARD), 0);
@@ -73,7 +73,7 @@ lv_obj_t *page_main_create(void)
     lv_label_set_text(title, "边缘网关监控");
     lv_obj_set_style_text_font(title, UI_FONT_CJK, 0);   /* 中文标题用小字号（14px 抗锯齿） */
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, 8, 0);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);          /* 顶栏正中 */
 
     label_status = lv_label_create(top);
     lv_label_set_text(label_status, LV_SYMBOL_WIFI " OFF");
@@ -134,22 +134,16 @@ lv_obj_t *page_main_create(void)
     ui_style_card(card, true);
 
     lv_obj_t *lab_ltitle = lv_label_create(card);
-    lv_label_set_text(lab_ltitle, LV_SYMBOL_EYE_OPEN " LIGHT");
+    lv_label_set_text(lab_ltitle, LV_SYMBOL_EYE_OPEN " LIGHT (lx)");   /* 单位写进标题，数字右边不再挂零碎标签 */
     lv_obj_set_style_text_font(lab_ltitle, UI_FONT_ASCII, 0);
     lv_obj_set_style_text_color(lab_ltitle, lv_color_hex(C_DIM), 0);
     lv_obj_align(lab_ltitle, LV_ALIGN_LEFT_MID, 10, 0);
-
-    lv_obj_t *lab_lunit = lv_label_create(card);
-    lv_label_set_text(lab_lunit, "lx");
-    lv_obj_set_style_text_font(lab_lunit, UI_FONT_ASCII, 0);
-    lv_obj_set_style_text_color(lab_lunit, lv_color_hex(C_DIM), 0);
-    lv_obj_align(lab_lunit, LV_ALIGN_RIGHT_MID, -10, 0);
 
     label_light = lv_label_create(card);
     lv_obj_set_style_text_font(label_light, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(label_light, lv_color_hex(C_LIGHT), 0);
     lv_label_set_text(label_light, "--");
-    lv_obj_align_to(label_light, lab_lunit, LV_ALIGN_OUT_LEFT_MID, -4, 0);
+    lv_obj_align(label_light, LV_ALIGN_RIGHT_MID, -10, 0);
 
     return scr;
 }

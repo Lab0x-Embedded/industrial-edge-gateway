@@ -174,11 +174,18 @@ void AT(void)
             vTaskDelay(1000);
         xSemaphoreTake(uart1_mutex, portMAX_DELAY);	//阻塞获取互斥锁
 
-        /* WiFi 设置页的点名扫描：在持锁的 AT 语境里做（UI 线程只置标志，不阻塞界面） */
+        /* WiFi 设置页的点名扫描：在持锁的 AT 语境里做（UI 线程只置标志，不阻塞界面）。
+         * 失败立刻重试一次：退透传那一步常年被下行数据吞 +++，两次足以覆盖。 */
         if (wifi_scan_request)
         {
             wifi_scan_request = 0;
-            wifi_scan_state = (wifi_scan_locked() < 0) ? WIFI_SCAN_FAIL : WIFI_SCAN_DONE;
+            int ap = wifi_scan_locked();
+            if (ap < 0)
+            {
+                dbg_print("[NET] scan retry\r\n");
+                ap = wifi_scan_locked();
+            }
+            wifi_scan_state = (ap < 0) ? WIFI_SCAN_FAIL : WIFI_SCAN_DONE;
         }
 
         /* WiFi 设置页请求重连：置离线走 RE 全量重连（新凭据已由 wifi_conn_save 生效）。

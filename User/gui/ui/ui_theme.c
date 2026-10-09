@@ -12,6 +12,12 @@ void ui_style_screen(lv_obj_t *scr)
 {
     lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    /* 默认主题的 scr 样式在屏上留了 pad_row/pad_column（PAD_SMALL），
+     * 显式清零，免得日后改用 flex 布局时被这 3px 阴。 */
+    lv_obj_set_style_pad_all(scr, 0, 0);
+    lv_obj_set_style_pad_row(scr, 0, 0);
+    lv_obj_set_style_pad_column(scr, 0, 0);
+    lv_obj_set_style_radius(scr, 0, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
 }
@@ -24,6 +30,8 @@ void ui_style_card(lv_obj_t *obj, bool border)
     lv_obj_set_style_border_width(obj, border ? 1 : 0, 0);
     lv_obj_set_style_border_color(obj, lv_color_hex(C_TRACK), 0);
     lv_obj_set_style_pad_all(obj, 0, 0);
+    lv_obj_set_style_pad_row(obj, 0, 0);        /* 主题的 scr 样式给普通 obj 留了 pad_row/column，显式清掉 */
+    lv_obj_set_style_pad_column(obj, 0, 0);
     lv_obj_set_style_shadow_width(obj, 0, 0);   /* 默认主题的投影在深色底上很脏 */
     lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
 }

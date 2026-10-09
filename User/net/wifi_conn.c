@@ -130,13 +130,29 @@ int wifi_join(void)
  *  AT 透传进出：扫描 / 校时都要临时退出透传去发 AT 指令
  *  （TCP 连接不断，MQTT 会话无感；离线时无害，重连流程会重建）
  *  调用前提：已持有 uart1_mutex
+ *
+ *  at_exit_passthrough 返回 0=确认已在 AT 指令模式；-1=没应答。
+ *  为什么要重试 + 静默期：ESP 在透传模式下要求 "+++" 前后各有 20ms 静默，
+ *  当时若正好有下行数据，"+++" 会被当成 TCP 数据吞掉 → 退不出透传 →
+ *  后面发的 CWLAP 也被当数据 → 用户看到"扫描失败"。实测这是最常见的失败原因，
+ *  所以给两次机会，并在失败时把原因写进日志页（LOG_WARN）。
  * ============================================================ */
-static void at_exit_passthrough(void)
+static int at_exit_passthrough(void)
 {
-    HAL_UART_Transmit(&huart4, (uint8_t *)"+++", 3, 100);
-    vTaskDelay(1000);                        /* 退透传保护时间，ESP 规范要求 */
-    ESP_SendCmd_OK("AT\r\n", 2000);          /* 一条普通 AT 完成模式切换 */
-    RingBuf_Clear();
+    for (int attempt = 0; attempt < 2; attempt++)
+    {
+        RingBuf_Clear();
+        vTaskDelay(50);                          /* 先让线路静一下再发 +++ */
+        HAL_UART_Transmit(&huart4, (uint8_t *)"+++", 3, 100);
+        vTaskDelay(1000);                        /* 退透传保护时间，ESP 规范要求 */
+        if (ESP_SendCmd_OK("AT\r\n", 1500) == ESP_OK)
+        {
+            RingBuf_Clear();
+            return 0;
+        }
+        dbg_print("[NET] at escape retry\r\n");
+    }
+    return -1;
 }
 
 static void at_enter_passthrough(void)
@@ -148,7 +164,11 @@ static void at_enter_passthrough(void)
 
 /* ============================================================
  *  热点扫描：退透传 → AT+CWLAP（逐字节收）→ 解析去重 → 恢复透传
- *  返回热点数；-1 = 没收到应答（串口/AT 模块异常）
+ *  返回：>=0 = 扫到的热点数（0 = 正常应答但没有热点）
+ *        -1 = 退不出透传（模块没应答）
+ *        -2 = CWLAP 一个字节都没回
+ *        -3 = CWLAP 回了 ERROR
+ *  三条失败路径都写日志页（LOG_WARN），现场不用接串口也能看到原因。
  * ============================================================ */
 int wifi_scan_locked(void)
 {
@@ -157,7 +177,12 @@ int wifi_scan_locked(void)
 
     wifi_ap_count = 0;
 
-    at_exit_passthrough();
+    if (at_exit_passthrough() != 0)
+    {
+        Log_Write(LOG_WARN, "scan FAIL: no AT mode");
+        return -1;                  /* 没确认进入 AT 模式：此时多半还在透传，
+                                     * 不能再发 CIPMODE/CIPSEND 去"恢复"（会污染 TCP 流） */
+    }
 
     /* 必须手动逐字节收：ESP_SendCmd 是"匹配到就丢弃"的流式实现，
      * 用它会把 +CWLAP 行当匹配数据吃掉，啥也剩不下。 */
@@ -174,8 +199,20 @@ int wifi_scan_locked(void)
             vTaskDelay(5);
         }
     }
+    buf[n] = 0;
 
     at_enter_passthrough();
+
+    if (n == 0)
+    {
+        Log_Write(LOG_WARN, "scan FAIL: no reply");
+        return -2;
+    }
+    if (strstr(buf, "ERROR") != NULL)
+    {
+        Log_Write(LOG_WARN, "scan FAIL: CWLAP error");
+        return -3;
+    }
 
     /* 解析 +CWLAP:(ecn,"ssid",rssi,...)，同名去重 */
     char *p = buf;
@@ -200,8 +237,11 @@ int wifi_scan_locked(void)
         p = e;
     }
 
-    if (n == 0) return -1;              /* 一个字节都没收到：串口/模块异常 */
+    if (cnt == 0)
+        Log_Write(LOG_INFO, "scan: 0 AP");     /* 应答正常但没有热点，不算失败 */
+
     wifi_ap_count = (uint8_t)cnt;
+    dbg_print("[NET] scan %d AP\r\n", cnt);
     return cnt;
 }
 
@@ -219,7 +259,9 @@ int wifi_time_sync_locked(void)
     int n = 0;
     char cmd[96];
 
-    at_exit_passthrough();
+    /* 退不出透传就别发校时指令：会被当成 TCP 数据吃掉，还可能污染 MQTT 流 */
+    if (at_exit_passthrough() != 0)
+        return -1;
 
     snprintf(cmd, sizeof cmd, "AT+CIPSNTPCFG=1,%d,\"%s\"\r\n", SNTP_TIMEZONE, SNTP_SERVER);
     ESP_SendCmd_OK(cmd, 2000);
