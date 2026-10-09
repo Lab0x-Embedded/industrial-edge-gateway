@@ -7,6 +7,8 @@
 - 配套从机板：`ModbusSlave/`（第二块 F407 板模拟 0x01 温湿度[DHT11 实测] / 0x02 光照[PF3 ADC] 两台 Modbus 从机）
 - 资源占用（网关，Debug 构建实测）：Flash ≈441KB / 1MB（42%），RAM ≈114KB / 128KB（87%）；从机：Flash 27KB，RAM 2.5KB
 
+![](./docs/preview/home.jpg)
+
 ## 使用方法（CubeMX / VS Code）
 
 1. 使用 STM32CubeMX 导入 `industrial-edge-gateway.ioc`，CubeMX 版本为 6.18.1。
