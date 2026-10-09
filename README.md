@@ -7,6 +7,15 @@
 - 配套从机板：`ModbusSlave/`（第二块 F407 板模拟 0x01 温湿度[DHT11 实测] / 0x02 光照[PF3 ADC] 两台 Modbus 从机）
 - 资源占用（网关）：Flash ≈390KB / 1MB（37%），RAM ≈110KB / 128KB（83.5%）；从机：Flash 27KB，RAM 2.5KB
 
+## 使用方法（CubeMX / VS Code）
+
+1. 使用 STM32CubeMX 导入 `industrial-edge-gateway.ioc`，CubeMX 版本为 6.18.1。
+2. 点击 "Generate Code"，基于 CMake 生成工程。根据你使用的编辑器选择对应的 Toolchain，默认是 CMake + GCC。
+3. 配置 VS Code 运行工程：安装最新版 VS Code，并安装 [STM32CubeMX 扩展](https://marketplace.visualstudio.com/items?itemName=stmicroelectronics.stm32-vscode-extension)。
+4. 根据右下角提示进行配置，通常一路点击"是"即可。烧录时，使用 Debug 模式并创建 `launch.json` 文件。
+
+> 注意：CubeMX 重新生成代码后，核对 `Core/Src/stm32f4xx_it.c` 里的 `TIM4_IRQHandler` 是否还在（HAL 时基，丢失=开机死机）。
+
 ## 目录结构
 
 ```
@@ -33,6 +42,7 @@ make size       # 网关 Flash/RAM 占用；make size-slave 同理
 ```
 
 工具链用 STM32Cube 自带 GNU Tools（`cmake/gcc-arm-none-eabi.cmake` 已指向），Homebrew 的 arm-none-eabi-gcc 缺 newlib 不可用。
+**Makefile 目前仅支持 macOS**：工具链路径写死了 macOS 的 STM32Cube bundle 位置（`~/Library/Application Support/stm32cube/...`），Windows/Linux 需改 `cmake/gcc-arm-none-eabi.cmake` 里的 `ST_TOOLCHAIN_DIR` 和 Makefile 的 `CUBE_BIN`。
 **注意**：必须走 `cmake --preset`（工具链在 preset 里）；手工 `cmake -S . -B build` 会在 build 阶段报 startup 文件语法错误。
 
 ## 烧录
@@ -79,13 +89,3 @@ make reset / make openocd        # 复位 / 起 gdbserver
 3. 串口终端（UART5 115200）看联网阶段输出与 `[LOG]` 日志镜像；屏幕"日志"页同内容。
 4. 接从机板 RS485（A/A、B/B、共地）：屏幕温湿度/光照 800ms 刷新（DHT11 实测 + 光敏 ADC）；日志出现 `modbus back online`。
 5. WIFI 座插 ESP8266：MQTT 连上后屏幕绿 ONLINE；断网测缓存（日志 WARN）、恢复后自动补传（每轮 ≤5 条）。
-
-## 已知注意点
-
-- **RTC 用 LSI**（板上 LSE 32.768K 未确认焊接）；日志时间戳有漂移。要换 LSE：CubeMX → RTC → 时钟源选 LSE，重新生成。
-- **触摸校准**存 W25Q 0xF00000（跟主板走，不跟屏）；按住屏幕开机强制重校。
-- **W25Q128 分区**：日志 0~4MB、缓存 4~8MB、参数区 0xF00000（触摸校准）；JEDEC ID 0xEF4018。`storage/w25qxx.c` 的忙等已改为 500ms 墙钟 + 必释放 CS（厂商例程的短超时会让写入静默失败）。
-- **ESP8266 需标准 AT 固件**（厂家资料包有刷机教程）；重连机制 = 3 次心跳失败(30s)判离线 → 每 10s `AT+RST` 全量重连。
-- **FreeRTOS heap 32KB**；LVGL 缓冲 320×30 行、内存池 48KB（`User/gui/lv_conf.h`）。
-- **息屏**：10 秒无触摸且云端状态无变化 → 背光灭；触摸唤醒（唤醒那一次按压不当作点击）。
-- **CubeMX 重新生成**：注意核对 `stm32f4xx_it.c` 是否保留 `TIM4_IRQHandler`（HAL 时基，缺失=开机死机白屏）；从机的 ADC 开关在 `ModbusSlave/hal/Inc` 本地 hal_conf，不受网关 .ioc 影响。
