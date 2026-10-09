@@ -211,9 +211,13 @@ static void modal_create(void)
     lv_obj_set_style_radius(modal_list, 6, 0);
     lv_obj_set_style_border_width(modal_list, 0, 0);
     lv_obj_set_style_pad_all(modal_list, 2, 0);
+    lv_obj_set_style_pad_right(modal_list, 4, 0);   /* 给右侧滚动条留位置，别压住 dBm */
     lv_obj_set_style_pad_row(modal_list, 2, 0);
     lv_obj_set_flex_flow(modal_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scrollbar_mode(modal_list, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_style_width(modal_list, 3, LV_PART_SCROLLBAR);      /* 细滚动条 */
+    lv_obj_set_style_bg_color(modal_list, lv_color_hex(C_TRACK), LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_opa(modal_list, LV_OPA_COVER, LV_PART_SCROLLBAR);
 }
 
 static void modal_open(void)
