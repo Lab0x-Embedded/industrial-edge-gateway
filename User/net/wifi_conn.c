@@ -213,7 +213,8 @@ static uint8_t rx_selfcheck(void)
     {
         __HAL_UART_CLEAR_OREFLAG(&huart4);      /* F4 上这一句同时清 PE/FE/NE/ORE */
         huart4.ErrorCode = HAL_UART_ERROR_NONE;
-        HAL_UARTEx_ReceiveToIdle_DMA(&huart4, a, sizeof(a));
+        if (HAL_UARTEx_ReceiveToIdle_DMA(&huart4, a, sizeof(a)) != HAL_OK)
+            uart4_rx_rst_fail++;
         __HAL_DMA_DISABLE_IT(&hdma_uart4_rx, DMA_IT_HT);
         Log_Write(LOG_WARN, "uart4 rx DEAD -> rearm");
     }

@@ -164,7 +164,12 @@ if (data_q.valid != 0)   /* 无效数据不进断网缓存，避免重连后补�
 */
 void AT(void)
 {
-	MQTT_Init();							//连接成功后 g_mqtt_connected为1 否则为0
+	/* 开机首次连接也必须持锁：MQTT 任务这时可能已经在跑（例如上电后立刻要补传缓存），
+	 * 它会拿同一把锁去读写 UART4 —— 不持锁就是两边抢同一份 AT 应答，
+	 * 结果是"开机随机连不上，非要等下一轮 10s 重连才好"。 */
+	xSemaphoreTake(uart1_mutex, portMAX_DELAY);
+	MQTT_Init();						//连接成功后 g_mqtt_connected为1 否则为0
+	xSemaphoreGive(uart1_mutex);
 
     uint8_t heart_fail = 0;  // 心跳连续失败次数
     static uint8_t sntp_tries = 0;   // SNTP 尝试次数（封顶用）

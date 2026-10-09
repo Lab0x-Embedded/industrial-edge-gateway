@@ -21,13 +21,28 @@ extern uint8_t a[256];
 extern DMA_HandleTypeDef hdma_uart4_rx;
 // 循环缓冲区大小
 
-// 循环缓冲区
-uint8_t buffer[BUFFER_SIZE];
-/* 索引必须是 16 位：缓冲扩到 2048B 后，uint8_t 索引在 256 处发生截断回绕，
+/* 循环缓冲区
+ *
+ * 索引为什么必须 volatile：
+ *   writeIndex 由中断（DMA 空闲回调）推进、任务侧读；readIndex 由任务侧推进、
+ *   中断侧读。不加 volatile 时，编译器可以把索引读到寄存器里复用（尤其
+ *   RingBuf_Read / Command_GetLength 会被内联进"逐字节读"的紧循环），
+ *   于是任务侧会看到过期的 writeIndex —— 表现为"数据明明到了却读不到"。
+ *
+ * 为什么必须是 16 位：缓冲扩到 2048B 后，uint8_t 索引在 256 处发生截断回绕，
  * (255+1)%2048 会先在 uint8_t 域里变成 0 再取模——位置全错。
- * 缓冲从 300 扩到 2048 是为了装下 AT+CWLAP 的整包扫描应答（多热点 1KB+）。 */
-uint16_t readIndex = 0;
-uint16_t writeIndex = 0;
+ *
+ * 缓冲 300 → 2048 是为了装下 AT+CWLAP 的整包扫描应答（多热点 1KB+）。 */
+uint8_t buffer[BUFFER_SIZE];
+volatile uint16_t readIndex = 0;
+volatile uint16_t writeIndex = 0;
+
+/* 接收侧自检计数（屏幕自检行 + 排查用）：
+ *   drop      —— 环形缓冲满、被整批丢弃的字节数（>0 说明读者跟不上/命令太密）
+ *   rst_fail  —— DMA 接收重启失败的次数（>0 说明 RX 曾经真的停摆过）
+ * 这两个数是 0，就能直接排除"缓冲区溢出 / DMA 停摆"这条路。 */
+volatile uint32_t uart4_rx_drop_bytes = 0;
+volatile uint32_t uart4_rx_rst_fail   = 0;
 
 /**
  * @brief  清空环形缓冲区（丢弃未读数据）
@@ -78,13 +93,21 @@ uint16_t Command_GetLength() {
 
 /**
 * @brief 计算缓冲区剩余空间
-* @return 剩余空间
-* @retval 0 缓冲区已满
-* @retval 1~BUFFER_SIZE-1 剩余空间
-* @retval BUFFER_SIZE 缓冲区为空
-*/
+ * @return 剩余空间
+ * @retval 0 缓冲区已满
+ * @retval 1~BUFFER_SIZE-1 剩余空间
+ * @retval BUFFER_SIZE-1 缓冲区为空
+ *
+ * 为什么是 BUFFER_SIZE-1-length（原来少了这个 -1，是个真 off-by-one）：
+ *   判空/判满靠"读指针是否追上写指针"，所以必须**始终空出一个槽位**。
+ *   原来允许写满到 length==BUFFER_SIZE，此时 writeIndex 恰好追上 readIndex，
+ *   Command_GetLength() 返回 0 → 刚写进去的这批数据和之前的未读数据
+ *   一起被当成"缓冲区为空"（读侧一个字都读不到），等于把整缓冲的应答扔掉。
+ *   扫描应答长、且是逐字节读的，最坏情况正好撞上这个边界。
+ */
 uint16_t Command_GetRemain() {
-    return (uint16_t)(BUFFER_SIZE - Command_GetLength());
+    uint16_t len = Command_GetLength();
+    return (uint16_t)((len >= BUFFER_SIZE - 1) ? 0 : (BUFFER_SIZE - 1 - len));
 }
 
 /**	不会覆盖旧数据 满后停止写入
@@ -111,9 +134,14 @@ uint16_t Command_Write(uint8_t *data, uint16_t len)
     if (data == NULL || len == 0)
         return 0;
 
-    uint16_t remain = Command_GetRemain();			//剩余长度
+    uint16_t remain = Command_GetRemain();		//剩余长度
     if (remain < len)
+    {
+        /* 整批丢弃（不覆盖旧数据）：把丢弃的字节数记下来，屏幕上就能看到
+         * DROP 是不是在涨 —— 直接排除或坐实"缓冲区溢出导致应答被截断"。 */
+        uart4_rx_drop_bytes += len;
         return 0;
+    }
 
 
     uint16_t idx = writeIndex;
@@ -172,7 +200,8 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 	{
 		__HAL_UART_CLEAR_OREFLAG(huart);      /* F4 上这一句同时清 PE/FE/NE/ORE */
 		huart->ErrorCode = HAL_UART_ERROR_NONE;
-		HAL_UARTEx_ReceiveToIdle_DMA(&huart4, a, sizeof(a));
+		if (HAL_UARTEx_ReceiveToIdle_DMA(&huart4, a, sizeof(a)) != HAL_OK)
+			uart4_rx_rst_fail++;             /* 重启失败要计数：RX 没挂上就没救了 */
 		__HAL_DMA_DISABLE_IT(&hdma_uart4_rx, DMA_IT_HT);
 	}
 }
@@ -184,7 +213,9 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 	{
 		Command_Write(a,Size);		//向缓冲区写入数据
 		
-		HAL_UARTEx_ReceiveToIdle_DMA(&huart4,a,sizeof(a));
+		/* 重启的返回值也要看：失败的话 RX 就静默停摆了（原代码忽略了它） */
+		if (HAL_UARTEx_ReceiveToIdle_DMA(&huart4,a,sizeof(a)) != HAL_OK)
+			uart4_rx_rst_fail++;
 		__HAL_DMA_DISABLE_IT(&hdma_uart4_rx,DMA_IT_HT);
 	}
 }

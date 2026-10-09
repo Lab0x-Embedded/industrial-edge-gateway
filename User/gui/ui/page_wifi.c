@@ -14,6 +14,7 @@
 #include "page_settings.h"
 #include "ui_theme.h"
 #include "wifi_conn.h"
+#include "esp_uart.h"      /* uart4_rx_drop_bytes / uart4_rx_rst_fail：自检行要用 */
 #include "tasks.h"
 #include "stm32f4xx.h"
 #include <stdio.h>
@@ -130,9 +131,11 @@ static const char *scan_fail_text(void)
     }
 }
 
-/* 自检行：板子这一侧的收发状态 —— 用来区分"模块不吭声"和"我们听不见模块"：
- *   RX:ok   → UDP DMA 还挂着（能收）
- *   RX:DEAD → 接收停摆了（HAL 出错后中止 DMA 且不重启；本版已加 ErrorCallback） */
+/* 自检行（两行）：用来区分"模块不吭声"和"我们听不见模块"，并直接坐实/排除
+ * 环缓冲溢出这条路：
+ *   RX:ok/DEAD   → UART4 接收 DMA 还挂着吗（DEAD = HAL 出错后 DMA 被中止）
+ *   TX:ok/err    → 发送是否报错（HAL_UART_Transmit 返回值）
+ *   DROP / RST   → 缓冲满被丢弃的字节数 / DMA 重启失败次数（都是 0 = 排除该路径） */
 static void modal_show_selftest(void)
 {
     char t[56];
@@ -140,6 +143,10 @@ static void modal_show_selftest(void)
              wifi_rx_armed ? "ok" : "DEAD",
              wifi_tx_err   ? "err" : "ok");
     modal_plain_row(t, (wifi_rx_armed && !wifi_tx_err) ? C_DIM : C_WARN);
+
+    snprintf(t, sizeof(t), "DROP:%lu RST:%lu",
+             (unsigned long)uart4_rx_drop_bytes, (unsigned long)uart4_rx_rst_fail);
+    modal_plain_row(t, (uart4_rx_drop_bytes || uart4_rx_rst_fail) ? C_WARN : C_DIM);
 }
 
 /* 失败时把抓到的原始字节摊到屏幕上（最多两行 × 34 字符）。
