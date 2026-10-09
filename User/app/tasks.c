@@ -172,6 +172,8 @@ void AT(void)
         for (int i = 0; i < 10 && !wifi_reconnect_request; i++)
             vTaskDelay(1000);
         xSemaphoreTake(uart1_mutex, portMAX_DELAY);	//阻塞获取互斥锁
+        /* WiFi 设置页请求重连：置离线走 RE 全量重连（新凭据已由 wifi_conn_save 生效）。
+         * 标志必须等重连尝试完整跑完才清——UI 靠它显示 Connecting 全程。 */
         uint8_t wifi_req = wifi_reconnect_request;
         if (wifi_req) {
             g_mqtt_connected = 0;             // 设置页保存了新凭据：强制全量重连
@@ -207,7 +209,8 @@ void AT(void)
 				{				//重连
                 RE_MQTT_Init();    
 				}
-        if (wifi_req) wifi_reconnect_request = 0;   // 尝试完整结束才清，UI 全程显示 Connecting
+        if (wifi_req)
+            wifi_reconnect_request = 0;   // 尝试完整结束才清，UI 全程显示 Connecting
         xSemaphoreGive(uart1_mutex);					//释放锁
     }
 }

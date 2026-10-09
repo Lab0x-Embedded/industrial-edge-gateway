@@ -23,7 +23,10 @@ extern DMA_HandleTypeDef hdma_uart4_rx;
 
 // 循环缓冲区
 uint8_t buffer[BUFFER_SIZE];
-uint16_t readIndex = 0;    /* 缓冲 2048B，索引必须 16 位（uint8_t 会在 256 处错绕） */
+/* 索引必须是 16 位：缓冲扩到 2048B 后，uint8_t 索引在 256 处发生截断回绕，
+ * (255+1)%2048 会先在 uint8_t 域里变成 0 再取模——位置全错。
+ * 缓冲从 300 扩到 2048 是为了装下 AT+CWLAP 的整包扫描应答（多热点 1KB+）。 */
+uint16_t readIndex = 0;
 uint16_t writeIndex = 0;
 
 /**

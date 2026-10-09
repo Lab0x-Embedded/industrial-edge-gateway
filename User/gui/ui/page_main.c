@@ -7,7 +7,8 @@
 #include "stm32f4xx.h"
 #include <stdio.h>
 
-/* ---- 设计系统：石板深色 ---- */
+/* ---- 设计系统：石板深色（各页共用同一套色板，改主题只动这里）----
+ * 背景/卡片/轨道三级灰阶 + 每项数据一个强调色，数字用内置 Montserrat 字体 */
 #define C_BG        0x0F172A   /* 背景 slate-900 */
 #define C_CARD      0x1E293B   /* 卡片 slate-800 */
 #define C_TRACK     0x334155   /* 轨道/边框 slate-700 */
@@ -24,7 +25,10 @@ static lv_obj_t *label_temp, *label_humi, *label_light;
 static lv_obj_t *arc_temp, *arc_humi, *bar_light;
 static lv_obj_t *label_status, *label_uptime;
 
-/* lvgl.h 里的 bar_light/label_light 曾是全局导出，现收为本页静态 */
+/* 所有数值控件收为本页静态，不再像旧版那样导出全局句柄 */
+
+/* 造一个仪表盘：lv_arc 去掉旋钮 + 圆头弧线，135°~45° 扫 270° 的经典表盘形态；
+ * 中心放大号数值，弧线下沿放名称标签 */
 static lv_obj_t *make_gauge(lv_obj_t *parent, int32_t min, int32_t max,
                             uint32_t color, const char *name)
 {
@@ -94,7 +98,8 @@ lv_obj_t *page_main_create(void)
     lv_obj_set_style_text_color(label_uptime, lv_color_hex(C_TEXT_DIM), 0);
     lv_obj_align(label_uptime, LV_ALIGN_RIGHT_MID, -6, 0);
 
-    /* ---- 双仪表：温度 / 湿度 ---- */
+    /* ---- 双仪表：温度 / 湿度 ----
+     * 130px 弧盘左右各一，量程对应传感器实际范围（温 -10~60℃，湿 0~100%） */
     arc_temp = make_gauge(scr, -10, 60, C_TEMP, "TEMP C");
     lv_obj_align(arc_temp, LV_ALIGN_TOP_LEFT, 14, 34);
     label_temp = lv_label_create(arc_temp);

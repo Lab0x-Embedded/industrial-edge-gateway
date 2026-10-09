@@ -121,9 +121,15 @@ int wifi_join(void)
 }
 
 
-/* 扫描可用热点：+++ 退透传 → AT+CWLAP 手动收应答（ESP_SendCmd 会把 CWLAP 行
- * 匹配消费掉，不能用它）→ 恢复透传 → 解析去重。
- * 返回热点数；-1=串口锁超时。扫描期间调用任务阻塞最长约 10s。 */
+/* 扫描可用热点，完整时序：
+ *   1. 拿 uart1_mutex（独占 ESP 串口，8s 超时防死等）
+ *   2. "+++" 退透传 + 一条 AT 完成模式切换（TCP 不断，MQTT 会话无感）
+ *   3. AT+CWLAP：必须手动逐字节收应答——ESP_SendCmd 内部是"流式匹配并
+ *      丢弃"，用它的话 +CWLAP 行会被当匹配数据吃掉，啥也剩不下；
+ *      收到 "\r\nOK\r\n"（正常结束）或 "ERROR" 提前退出
+ *   4. AT+CIPMODE=1 + AT+CIPSEND 恢复透传（在线时发布无缝继续）
+ *   5. 解析 +CWLAP:(ecn,"ssid",rssi,...) 里的引号 SSID，同名去重
+ * 返回热点数；-1=串口锁超时。阻塞最长约 10s，调用方（UI）需自行先刷新界面。 */
 int wifi_scan(char (*out)[33], int max_ap)
 {
     static char buf[1024];          /* CWLAP 多热点应答可达 1KB+，不占任务栈 */

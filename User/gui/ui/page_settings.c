@@ -21,7 +21,9 @@ static void btn_back_click(lv_event_t *e)
     lv_scr_load(main_scr);
 }
 
-/* 回调直传打开函数（函数指针经 user_data 传递，ARM 32 位下安全） */
+/* 列表项回调：user_data 直接携带"要打开的页面函数"。
+ * 函数指针经 void* 传递在 ISO C 里属灰色地带，但 ARM 32 位下指针等宽，
+ * 是 LVGL 嵌入式代码的通用做法——比维护一张索引表干净。 */
 static void item_click(lv_event_t *e)
 {
     void (*open)(void) = (void (*)(void))lv_event_get_user_data(e);
@@ -37,6 +39,7 @@ static void add_item(lv_obj_t *list, const char *icon, const char *text, void (*
     lv_obj_set_style_border_color(btn, lv_color_hex(C_TRACK), 0);
 }
 
+/* 各子页统一顶栏：左返回（回主界面）+ 居中标题，避免每个页面重复这段 */
 static void title_bar(lv_obj_t *scr, const char *title)
 {
     lv_obj_t *btn_back = lv_btn_create(scr);

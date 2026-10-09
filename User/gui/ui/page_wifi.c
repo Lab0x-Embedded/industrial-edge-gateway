@@ -45,7 +45,7 @@ static void btn_connect_click(lv_event_t *e)
     wifi_reconnect_request = 1;      /* AT 任务 ≤1s 响应；标志在重连尝试完整结束才清 */
 }
 
-/* 下拉选择热点 → 填入 SSID 输入框 */
+/* 下拉选中热点 → 填入 SSID 输入框（密码仍需手输，热点列表里拿不到密码） */
 static void dd_ssid_cb(lv_event_t *e)
 {
     char buf[48];
@@ -53,7 +53,13 @@ static void dd_ssid_cb(lv_event_t *e)
     lv_textarea_set_text(ta_ssid, buf);
 }
 
-/* 扫描可用热点：阻塞最长 ~10s（期间界面冻结，先强制刷新出 Scanning 状态） */
+/* 扫描可用热点。
+ * 两个关键点：
+ * 1) wifi_scan 是阻塞调用（退透传 1s + CWLAP 最长 8s + 恢复透传 1s），
+ *    期间 UI 任务被占住、界面不刷新——所以先 lv_refr_now 强制把
+ *    "Scanning..." 画出去再进阻塞；
+ * 2) 结果去重后拼成 "ssid1\nssid2\n..." 塞给下拉（LVGL 选项即换行分隔）。
+ * 结果三态：Found / No AP（扫描到 0 个）/ Scan FAIL（串口锁超时 8s）。 */
 static void btn_scan_click(lv_event_t *e)
 {
     (void)e;
@@ -89,7 +95,11 @@ static void btn_scan_click(lv_event_t *e)
     lv_obj_clear_state(btn_scan, LV_STATE_DISABLED);
 }
 
-/* 500ms 轮询：Connecting 贯穿整个重连尝试（请求标志由 AT 任务在尝试结束时清除） */
+/* 500ms 状态轮询（仅本页可见时刷新）。
+ * 状态优先级：Connecting > WiFi FAIL > NO CLOUD > OK。
+ * Connecting 能贯穿全程的原因：wifi_reconnect_request 从 UI 置 1 起，
+ * 直到 AT 任务把"退网→连新 WiFi→TCP→MQTT"整个重连流程跑完才清 0
+ * （旧版插错位置被提前清掉，用户只看到一闪而过的 FAIL）。 */
 static void wifi_timer_cb(lv_timer_t *t)
 {
     (void)t;
@@ -213,7 +223,8 @@ void page_wifi_open(void)
         lv_obj_set_style_text_color(dd_ssid, lv_color_hex(C_TEXT), 0);
         lv_obj_add_event_cb(dd_ssid, dd_ssid_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-        /* 底部键盘（深色） */
+        /* 底部键盘常驻：本页的核心交互就是输入，不做弹出/收起（少一套状态）
+         * 压到 92px 高，320x240 上区留给输入框/按钮/下拉 */
         kb = lv_keyboard_create(scr_wifi);
         lv_obj_set_size(kb, 320, 92);
         lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -221,7 +232,8 @@ void page_wifi_open(void)
         lv_obj_set_style_bg_color(kb, lv_color_hex(C_TRACK), LV_PART_ITEMS);
         lv_obj_set_style_text_color(kb, lv_color_hex(C_TEXT), LV_PART_ITEMS);
 
-        /* 预填当前凭据（W25Q 存档或编译期默认） */
+        /* 预填当前凭据：来自 W25Q 存档（设置页保存过）或编译期默认，
+         * 方便只改其中一项（如换热点只改 SSID、密码不变） */
         wifi_conn_get(ssid, sizeof ssid, pass, sizeof pass);
         lv_textarea_set_text(ta_ssid, ssid);
         lv_textarea_set_text(ta_pass, pass);

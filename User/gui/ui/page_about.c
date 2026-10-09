@@ -16,7 +16,11 @@
 
 static lv_obj_t *scr_about = NULL;
 static lv_obj_t *list_about = NULL;
-static lv_obj_t *label_up = NULL, *label_ip = NULL;   /* 直接持有标签，避免子对象索引（旧版因此空指针死机） */
+/* 动态行直接持有标签指针刷新。
+ * 旧版按"列表第 N 项的子对象"索引取标签，而 lv_list_add_text 返回的就是
+ * 标签本身（没有子对象）→ 取到 NULL → 空指针写 → 进页面 1 秒后死机。
+ * 教训：LVGL 树操作要么存返回值，要么 lv_obj_get_child 前确认层级。 */
+static lv_obj_t *label_up = NULL, *label_ip = NULL;
 static lv_timer_t *about_timer = NULL;
 
 static void btn_back_click(lv_event_t *e)
