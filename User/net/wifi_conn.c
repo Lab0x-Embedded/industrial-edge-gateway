@@ -50,6 +50,8 @@ volatile int8_t  wifi_scan_code = 0;
 char             wifi_scan_raw[64] = {0};
 volatile uint8_t wifi_rx_armed = 1;    /* 失败自检：当时 UART4 RX DMA 还挂着吗 */
 volatile uint8_t wifi_tx_err   = 0;    /* 失败自检：发送是否报错（HAL_UART_Transmit 返回值） */
+volatile uint8_t wifi_re_bit   = 1;    /* 失败自检：UART4 CR1 的 RE 位（0=外设侧接收被关了） */
+volatile uint8_t wifi_loop_ok  = 0;    /* 失败自检：片内读写通路自检是否通过 */
 
 void wifi_conn_load(void)
 {
@@ -209,6 +211,9 @@ static void wait_line_idle(uint32_t quiet_ms)
 static uint8_t rx_selfcheck(void)
 {
     uint8_t armed = (huart4.RxState == HAL_UART_STATE_BUSY_RX) ? 1 : 0;
+    /* 顺手读一眼外设侧的 RE 位：DMA/句柄书都说"在收"、但 RE 被关掉时，
+     * 线上来的数据根本不会进接收移位寄存器 —— 这时上面那个 armed 判断是假的。 */
+    wifi_re_bit = (huart4.Instance->CR1 & USART_CR1_RE) ? 1 : 0;
     if (!armed)
     {
         __HAL_UART_CLEAR_OREFLAG(&huart4);      /* F4 上这一句同时清 PE/FE/NE/ORE */
@@ -248,6 +253,9 @@ static int at_exit_passthrough_impl(void)
     /* 三次都没应答：先自检 RX 是否掉线（掉了就重新挂上），再抓一段原始字节 —— 
      * 屏幕上就能看到"板子还能不能听见模块 / 模块到底在说什么" */
     wifi_rx_armed = rx_selfcheck();
+    /* 片内自检：假数据写进环形缓冲再读回来，验证我们这侧的数据通路。
+     * 放在抓包之前（此时模块已确认静默，不会被接收中断抢写指针）。 */
+    wifi_loop_ok = RingBuf_SelfTest();
     probe_capture(400);
     return -1;
 }

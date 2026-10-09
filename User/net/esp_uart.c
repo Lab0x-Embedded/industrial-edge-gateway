@@ -43,6 +43,7 @@ volatile uint16_t writeIndex = 0;
  * 这两个数是 0，就能直接排除"缓冲区溢出 / DMA 停摆"这条路。 */
 volatile uint32_t uart4_rx_drop_bytes = 0;
 volatile uint32_t uart4_rx_rst_fail   = 0;
+volatile uint32_t uart4_rx_bytes      = 0;   /* 开机以来收到的总字节数（0 = 从没听见过模块） */
 
 /**
  * @brief  清空环形缓冲区（丢弃未读数据）
@@ -211,6 +212,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
 	if(huart==&huart4)
 	{
+		uart4_rx_bytes += Size;      /* 总收字节数：0 就说明开机以来模块一个字节都没送来 */
 		Command_Write(a,Size);		//向缓冲区写入数据
 		
 		/* 重启的返回值也要看：失败的话 RX 就静默停摆了（原代码忽略了它） */
@@ -218,4 +220,36 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 			uart4_rx_rst_fail++;
 		__HAL_DMA_DISABLE_IT(&hdma_uart4_rx,DMA_IT_HT);
 	}
+}
+
+/* 片内自检：写一段假应答进环形缓冲 → 逐字节读回来比对。
+ * 目的：把"我们这侧的数据通路"和"串口线上到底有没有数据"分开。
+ *   LOOP:ok   → 写指针/读指针/环形缓冲/读路径全部正常，
+ *               那么"收不到字节"的原因就一定在板外（模块/接线/供电/波特率）
+ *   LOOP:fail → 我们自己的读写路径有问题（先修软件）
+ * 测试期间临时关掉 UART4 与 DMA1_Stream2 中断，避免和接收中断抢写指针。 */
+uint8_t RingBuf_SelfTest(void)
+{
+    static const char probe[] = "+CWLAP:(0,\"LOOP\",-50,11:22:33:44:55:66,6,-30)\r\nOK\r\n";
+    const uint16_t n = (uint16_t)(sizeof(probe) - 1);
+    uint8_t ok = 0;
+
+    HAL_NVIC_DisableIRQ(UART4_IRQn);
+    HAL_NVIC_DisableIRQ(DMA1_Stream2_IRQn);
+
+    RingBuf_Clear();
+    if (Command_Write((uint8_t *)probe, n) == n)
+    {
+        char got[80];
+        uint16_t k = 0;
+        uint8_t ch;
+        while (k < n && RingBuf_Read(&ch)) got[k++] = (char)ch;
+        if (k == n && memcmp(got, probe, n) == 0 && strstr(got, "+CWLAP:(") != NULL)
+            ok = 1;
+    }
+    RingBuf_Clear();          /* 清掉测试残留，别污染后面真实数据的读取 */
+
+    HAL_NVIC_EnableIRQ(UART4_IRQn);
+    HAL_NVIC_EnableIRQ(DMA1_Stream2_IRQn);
+    return ok;
 }

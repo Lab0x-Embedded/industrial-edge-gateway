@@ -39,6 +39,9 @@ extern volatile int8_t  wifi_scan_code;              /* 上次扫描结果码：
 extern char             wifi_scan_raw[64];           /* 失败时抓到的一小段原始应答（可打印化），给屏幕自检用 */
 extern volatile uint8_t wifi_rx_armed;               /* 失败自检：当时 UART4 RX DMA 是否还挂着 */
 extern volatile uint8_t wifi_tx_err;                 /* 失败自检：发送是否报错 */
+extern volatile uint8_t wifi_re_bit;                 /* 失败自检：CR1 的 RE 位（0=外设侧接收被关了） */
+extern volatile uint8_t wifi_loop_ok;                /* 失败自检：片内读写通路（RingBuf_SelfTest）是否通过 */
+extern volatile uint32_t uart4_rx_bytes;             /* 开机以来 UART4 收到的总字节数（0=从没听见过模块） */
 
 void wifi_conn_load(void);                                        /* 上电装载存档（幂等） */
 void wifi_conn_get(char *ssid, size_t n_ssid, char *pass, size_t n_pass);

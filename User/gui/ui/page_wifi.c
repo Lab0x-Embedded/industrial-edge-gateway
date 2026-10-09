@@ -138,15 +138,25 @@ static const char *scan_fail_text(void)
  *   DROP / RST   → 缓冲满被丢弃的字节数 / DMA 重启失败次数（都是 0 = 排除该路径） */
 static void modal_show_selftest(void)
 {
-    char t[56];
-    snprintf(t, sizeof(t), "RX:%s TX:%s",
-             wifi_rx_armed ? "ok" : "DEAD",
-             wifi_tx_err   ? "err" : "ok");
-    modal_plain_row(t, (wifi_rx_armed && !wifi_tx_err) ? C_DIM : C_WARN);
+    char t[64];
 
-    snprintf(t, sizeof(t), "DROP:%lu RST:%lu",
-             (unsigned long)uart4_rx_drop_bytes, (unsigned long)uart4_rx_rst_fail);
-    modal_plain_row(t, (uart4_rx_drop_bytes || uart4_rx_rst_fail) ? C_WARN : C_DIM);
+    /* 行 1：收发状态 + 外设 RE 位（RE:0 = 接收移位器被关了，线上有数据也进不来） */
+    snprintf(t, sizeof(t), "RX:%s RE:%d TX:%s",
+             wifi_rx_armed ? "ok" : "DEAD", (int)wifi_re_bit,
+             wifi_tx_err   ? "err" : "ok");
+    modal_plain_row(t, (wifi_rx_armed && wifi_re_bit && !wifi_tx_err) ? C_DIM : C_WARN);
+
+    /* 行 2：开机以来收到的总字节数 + 缓冲丢弃 / DMA 重启失败。
+     * RXB:0 = 开机到现在模块一个字节都没送来（决定性判据）。 */
+    snprintf(t, sizeof(t), "RXB:%lu DROP:%lu RST:%lu",
+             (unsigned long)uart4_rx_bytes, (unsigned long)uart4_rx_drop_bytes,
+             (unsigned long)uart4_rx_rst_fail);
+    modal_plain_row(t, (uart4_rx_bytes == 0 || uart4_rx_drop_bytes || uart4_rx_rst_fail)
+                       ? C_WARN : C_DIM);
+
+    /* 行 3：片内读写通路自检。ok 而 RXB 不动 → 故障在板外（模块/接线/供电） */
+    snprintf(t, sizeof(t), "LOOP:%s", wifi_loop_ok ? "ok" : "fail");
+    modal_plain_row(t, wifi_loop_ok ? C_DIM : C_WARN);
 }
 
 /* 失败时把抓到的原始字节摊到屏幕上（最多两行 × 34 字符）。
@@ -230,7 +240,7 @@ static void modal_create(void)
     lv_obj_add_event_cb(modal, modal_close_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *panel = lv_obj_create(modal);
-    lv_obj_set_size(panel, 300, 196);
+    lv_obj_set_size(panel, 300, 206);   /* 206 = 标题 34 + 列表 168 + 余量：失败时 6 行自检放得下 */
     lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, 22);
     ui_style_card(panel, true);
     lv_obj_add_flag(panel, LV_OBJ_FLAG_CLICKABLE);      /* 吞掉点击：点面板不该关窗（无需回调） */
@@ -262,7 +272,7 @@ static void modal_create(void)
     lv_obj_add_event_cb(btn_x, modal_close_cb, LV_EVENT_CLICKED, NULL);
 
     modal_list = lv_obj_create(panel);
-    lv_obj_set_size(modal_list, 288, 150);
+    lv_obj_set_size(modal_list, 288, 168);   /* 6 行(26px+2 间距)：失败时最多 6 行自检信息 */
     lv_obj_align(modal_list, LV_ALIGN_TOP_MID, 0, 34);
     lv_obj_set_style_bg_color(modal_list, lv_color_hex(C_DARK), 0);
     lv_obj_set_style_bg_opa(modal_list, LV_OPA_COVER, 0);
