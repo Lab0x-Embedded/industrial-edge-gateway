@@ -25,6 +25,7 @@
 #include "w25qxx.h"
 #include "log.h"
 #include "cache.h"
+#include <stdlib.h>
 
 
 // 空闲熄屏相关
@@ -73,8 +74,10 @@ void Modbus(void)
     }
 }
 
-/*补传绿灯亮 正常红灯亮 离线存储黄灯亮*/
+/*补传D2亮 正常D0亮 离线存储D1亮*/
 /*
+D0:PE3 D1:PE4 D2:PG9
+
 正常在线：先补传历史数据，再发送实时数据，通知 UI 更新。
 
 断网期间：把数据存入 SPI Flash，等待恢复。
@@ -106,11 +109,11 @@ xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
 							{
 								if (FlashCache_Read(cached, &len) == 0)					/*从读指针位置读一条缓存数据*/
 									{
-											HAL_GPIO_WritePin(GPIOE,GPIO_PIN_3,GPIO_PIN_SET);
-											HAL_GPIO_WritePin(GPIOG,GPIO_PIN_9,GPIO_PIN_RESET);
+											HAL_GPIO_WritePin(GPIOE,GPIO_PIN_3,GPIO_PIN_SET);   //D0灭
+											HAL_GPIO_WritePin(GPIOG,GPIO_PIN_9,GPIO_PIN_RESET); //D2亮
 											if (MQTT_PublishJson(cached) != 0) break;   /* 未收到 PUBACK 不标记已发，下轮重试同一条 */
 											FlashCache_MarkSent();				//只改魔数，不擦除、改魔数标记已补传
-										//Log_Write(LOG_WARN,"BUCHUAN Finish");
+									        Log_Write(LOG_WARN,"BUCHUAN*1");
 								count++;
 								if (count > 4)
 								{
@@ -129,8 +132,8 @@ xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
 							// 发实时数据 并且给ui写队列 （从数组里获取数据）
 								MQTT_SendAllDev_NoWait();
                // MQTT_SendTempHumi_NoWait(data_q.temp, data_q.shi,data_q.light);
-								HAL_GPIO_WritePin(GPIOE,GPIO_PIN_3,GPIO_PIN_RESET);               
-								HAL_GPIO_WritePin(GPIOE,GPIO_PIN_4,GPIO_PIN_SET);				
+								HAL_GPIO_WritePin(GPIOE,GPIO_PIN_3,GPIO_PIN_RESET);   //D0亮            
+								HAL_GPIO_WritePin(GPIOE,GPIO_PIN_4,GPIO_PIN_SET);	  //D1灭		
 								xSemaphoreGive(uart1_mutex);					//释放锁							
 //                xQueueOverwrite(lvgl_data_queue, &data_q);			// 写队列 永远只保留最新一次采集结果，旧值被直接覆盖 该队列长度为1
             }
@@ -240,6 +243,7 @@ void UI(void)
                 HAL_GPIO_WritePin(GPIOF, GPIO_PIN_10, GPIO_PIN_SET);
                 lcd_bl_en = 1;
                 lv_indev_wait_release(lv_indev_get_act());
+                dbg_print("触摸点亮屏幕,lcd_bl_en = %d\n", lcd_bl_en);
             }
         }
 
@@ -248,13 +252,21 @@ void UI(void)
         {
             HAL_GPIO_WritePin(GPIOF,GPIO_PIN_10,GPIO_PIN_RESET);
             lcd_bl_en = 0;
+            dbg_print("息屏,lcd_bl_en = %d\n", lcd_bl_en);
         }
 
         // 数据变化 则亮屏 + 重置计时   
         if (xQueueReceive(lvgl_data_queue, &disp_data, 0) == pdPASS)
         {
             page_main_update_data(disp_data.temp, disp_data.shi,disp_data.light);
-
+            
+            if(HAL_GPIO_ReadPin(TP_PEN_GPIO_Port, LCD_BL_Pin) == GPIO_PIN_RESET)
+            {
+                dbg_print("数据亮屏,此时P10是0,lcd_bl_en = %d\n", lcd_bl_en);
+            }
+            else{
+                dbg_print("数据亮屏,此时P10是1,lcd_bl_en = %d\n", lcd_bl_en);
+            }
         }
 
         // WiFi/MQTT 状态变更也刷新亮屏
@@ -267,6 +279,7 @@ void UI(void)
             idle_tick = xTaskGetTickCount();
             HAL_GPIO_WritePin(GPIOF,GPIO_PIN_10,GPIO_PIN_SET);
             lcd_bl_en = 1;
+            dbg_print("状态变化亮屏,lcd_bl_en = %d\n", lcd_bl_en);
         }
 
 				

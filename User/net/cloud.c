@@ -13,8 +13,14 @@
 extern uint8_t a[256];
 
 /* 调试串口（UART5）：只打关键事件，不逐条刷发布 */
-void dbg_print(const char *s) {
-  HAL_UART_Transmit(&huart5, (uint8_t *)s, strlen(s), 100);
+void dbg_print(const char *fmt, ...) {
+    char buf[128];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (n > 0)
+        HAL_UART_Transmit(&huart5, (uint8_t*)buf, n, HAL_MAX_DELAY);
 }
 
 volatile uint8_t wifi_connected =

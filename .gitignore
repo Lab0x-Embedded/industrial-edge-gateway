@@ -9,3 +9,7 @@ cmake
 CMakePresets.json
 .vscode
 .mxproject
+
+docs
+.workbuddy
+
