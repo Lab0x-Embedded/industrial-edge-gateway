@@ -131,7 +131,11 @@ void LCD_Init(void)
     LCD_WR_DATA(0x3C); LCD_WR_DATA(0x05); LCD_WR_DATA(0x10); LCD_WR_DATA(0x0F);
     LCD_WR_DATA(0x3F); LCD_WR_DATA(0x3F); LCD_WR_DATA(0x0F);
 
-    LCD_WR_REG(0x21);   /* 反显（原工程使用，白底界面） */
+    /* 显示反显（display inversion）：0x21=反显 INVON，0x20=正显 INVOFF。
+     * 原工程（白底界面）带过来的是 0x21，但本屏实测需要正显：
+     * 置 0x21 时整屏颜色取反 —— 深色底 #0F172A 显示成奶白 #F0E8D5、
+     * 深色卡片 #1E293B 显示成浅灰 #E1D6C4，表现为"白底 + 灰卡片"。 */
+    LCD_WR_REG(0x20);   /* 正显（关反显） */
     LCD_WR_REG(0x11);   /* 退出睡眠 */
     HAL_Delay(120);
     LCD_WR_REG(0x29);   /* 开显示 */
