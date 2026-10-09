@@ -56,7 +56,12 @@ void MX_RTC_Init(void)
   }
 
   /* USER CODE BEGIN Check_RTC_BKUP */
-
+  /* 备份寄存器标记在位 = 板上有 VBAT 电池、RTC 断电期间一直在走。
+   * 这种情况下绝不能走 CubeMX 默认的"无条件把时间清零"（会毁掉 RTC 时间），
+   * 直接保留 RTC 现有时间，由 app/clock.c 的 Clock_Init() 读走。
+   * 标记常量必须与 User/app/clock.c 的 CLOCK_BKP_MAGIC 一致。 */
+  #define RTC_BKP_CLOCK_MAGIC  0x504C4B43UL   /* "CLKP" */
+  if (RTC->BKP0R == RTC_BKP_CLOCK_MAGIC) return;
   /* USER CODE END Check_RTC_BKUP */
 
   /** Initialize RTC and set the Time and Date

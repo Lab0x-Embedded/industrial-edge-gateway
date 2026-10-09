@@ -59,7 +59,13 @@ void Clock_SetTime(uint8_t h, uint8_t m, uint8_t s)
     t.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
     t.StoreOperation = RTC_STOREOPERATION_RESET;
     if (HAL_RTC_SetTime(&hrtc, &t, RTC_FORMAT_BCD) == HAL_OK)
+    {
+        /* 坑：HAL_RTC_SetTime 返回时会把备份域写保护重新打开（清 PWR_CR_DBP），
+         * 此时直接写 BKP0R 是**无效**的（写被忽略，不报错）。必须显式放开。 */
+        HAL_PWR_EnableBkUpAccess();
         RTC->BKP0R = CLOCK_BKP_MAGIC;      /* 让下次上电能直接信任 RTC */
+        HAL_PWR_DisableBkUpAccess();
+    }
 }
 
 void Clock_GetTime(uint8_t *h, uint8_t *m, uint8_t *s)

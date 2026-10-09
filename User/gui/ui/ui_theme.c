@@ -81,7 +81,12 @@ void ui_style_keyboard(lv_obj_t *kb)
  * 只改本体的话，点开的列表还是默认浅色主题那份"白底黑字"。
  * 行高 = 字体行高 + LV_PART_SELECTED 的 text_line_space，
  * 高亮行底色是 LV_PART_SELECTED 画的矩形 —— 320x240 触屏上
- * 行高给到 ~28px 才好点。 */
+ * 行高给到 ~28px 才好点。
+ * 坑（踩过）：高亮矩形的位置是 draw_box 用 **LV_PART_SELECTED 的字体行高**
+ * 算的（id * (font_h + line_space)），而列表里的文字是子标签用
+ * **LV_PART_MAIN 的字体 + 继承下来的 line_space** 画的。两处理论上必须同字体、
+ * 同行距，否则第二行起高亮就错行；列表高度还要 max_height 夹住，否则 13 个
+ * 选项会顶出屏幕（列表本身可滚动）。 */
 void ui_style_dropdown(lv_obj_t *dd)
 {
     lv_obj_set_style_bg_color(dd, lv_color_hex(C_CARD), 0);
@@ -106,13 +111,16 @@ void ui_style_dropdown(lv_obj_t *dd)
     lv_obj_set_style_pad_all(list, 6, LV_PART_MAIN);
     lv_obj_set_style_text_color(list, lv_color_hex(C_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_font(list, UI_FONT_CJK, LV_PART_MAIN);
+    lv_obj_set_style_text_line_space(list, 12, LV_PART_MAIN);   /* 标签行距（子标签继承） */
     lv_obj_set_style_shadow_width(list, 0, LV_PART_MAIN);
+    lv_obj_set_style_max_height(list, 190, LV_PART_MAIN);       /* 顶到底就滚动，别顶出屏幕 */
 
     lv_obj_set_style_bg_color(list, lv_color_hex(C_BLUE), LV_PART_SELECTED);
     lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SELECTED);
     lv_obj_set_style_radius(list, 6, LV_PART_SELECTED);
     lv_obj_set_style_text_color(list, lv_color_hex(C_DARK), LV_PART_SELECTED);
-    lv_obj_set_style_text_line_space(list, 12, LV_PART_SELECTED);
+    lv_obj_set_style_text_font(list, UI_FONT_CJK, LV_PART_SELECTED);      /* 与 MAIN 同字体 */
+    lv_obj_set_style_text_line_space(list, 12, LV_PART_SELECTED);         /* 与 MAIN 同行距 */
 }
 
 void ui_title_bar(lv_obj_t *scr, const char *title,
