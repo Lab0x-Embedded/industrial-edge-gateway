@@ -31,6 +31,8 @@
 #define WIFI_SCAN_FAIL     3
 
 extern volatile uint8_t wifi_scan_request;   /* UI 置 1：请求一次扫描 */
+extern volatile uint8_t wifi_timesync_request; /* UI 置 1：请求一次 SNTP 校时（设置页"同步当前时间"） */
+extern volatile uint8_t wifi_timesync_result;  /* 校时结果：0=无 1=成功 2=失败（AT 任务写，设置页读） */
 extern volatile uint8_t wifi_scan_state;     /* 上面四态，UI 轮询 */
 extern volatile uint8_t wifi_ap_count;       /* 扫描结果条数 */
 extern char             wifi_ap_list[WIFI_AP_MAX][33];
@@ -47,12 +49,13 @@ int  wifi_join(void);
 /* —— 只能由 AT 任务在持 uart1_mutex 的上下文调用 ——
  * wifi_scan_locked：退透传 → AT+CWLAP → 解析去重填 wifi_ap_list →（原在线则）恢复透传；
  *                   返回热点数，负数见上面的失败码。
- * wifi_time_sync_locked：退透传 → CIPSNTPCFG + CIPSNTPTIME? → 解析并 Clock_SetTime；
+ * wifi_time_sync_locked：退透传 → CIPSNTPCFG + CIPSNTPTIME? → 解析日期时间并 Clock_SetDateTime；
  *                   0=已校时，-1/-2=失败（AT 固件不支持 / 应答异常）。
  * wifi_at_escape：退出透传并**确认**进入 AT 指令模式（静默期 + 重试）；
  *                   0=已在 AT 模式，-1=没应答（多半还在透传，此时别再发 AT 指令，
  *                   否则会被当成 TCP 数据灌进连接里）。cloud.c 的连接流程也用它。
- * wifi_at_passthrough_enter：CIPMODE=1 + CIPSEND 恢复透传 —— 只有确认 TCP 在线时才调；
+ * wifi_at_passthrough_enter：AT+CIPSEND 进透传（CIPMODE=1 由调用点在 CIPSTART
+ *                   之前设好，+++ 退透传不清它）——只有确认 TCP 在线时才调；
  *                   0=拿到 ">"（透传真的起来了），-1=没拿到（TCP 多半已断，
  *                   调用方应把 g_mqtt_connected 置 0 走重连，别再往串口灌 MQTT 字节）。
  * wifi_at_wait_ready：AT+RST 之后等模块重新应答（AT 固件要 1~3s），0=就绪、-1=超时。 */

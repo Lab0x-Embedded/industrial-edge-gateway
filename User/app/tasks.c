@@ -175,8 +175,9 @@ void AT(void)
     static uint8_t sntp_tries = 0;   // SNTP 尝试次数（封顶用）
     for (;;)
     {
-        /* 分段等待：WiFi 设置页的重连请求 / 扫描请求可即时打断 10s 心跳间隔 */
-        for (int i = 0; i < 10 && !wifi_reconnect_request && !wifi_scan_request; i++)
+        /* 分段等待：WiFi 设置页的重连请求 / 扫描请求 / 校时请求可即时打断 10s 心跳间隔 */
+        for (int i = 0; i < 10 && !wifi_reconnect_request && !wifi_scan_request
+                       && !wifi_timesync_request; i++)
             vTaskDelay(1000);
         xSemaphoreTake(uart1_mutex, portMAX_DELAY);	//阻塞获取互斥锁
 
@@ -196,6 +197,21 @@ void AT(void)
             wifi_scan_state = (ap < 0) ? WIFI_SCAN_FAIL : WIFI_SCAN_DONE;
         }
 
+        /* 设置页"同步当前时间"：手动立即校一次（已校过也允许——重校正是按钮的意义；
+         * 模块当前在透传还是 AT 态，由 locked 函数自己收拾）。结果进日志页，
+         * 校上后主屏时钟/日期立刻变亮变准，就是最直观的确认。 */
+        if (wifi_timesync_request)
+        {
+            wifi_timesync_request = 0;
+            if (wifi_time_sync_locked() == 0) {
+                wifi_timesync_result = 1;       /* 设置页轮询它显示"校时成功/失败" */
+                Log_Write(LOG_INFO, "time synced");
+            } else {
+                wifi_timesync_result = 2;
+                Log_Write(LOG_WARN, "timesync fail");
+            }
+        }
+
         /* WiFi 设置页请求重连：置离线走 RE 全量重连（新凭据已由 wifi_conn_save 生效）。
          * 标志必须等重连尝试完整跑完才清——UI 靠它显示 Connecting 全程。 */
         uint8_t wifi_req = wifi_reconnect_request;
@@ -205,11 +221,12 @@ void AT(void)
 				RingBuf_Clear();											//关键点 先清空缓冲区 否则有脏数据影响判断
         if (g_mqtt_connected)
         {
-            /* SNTP 校时：只给 3 次机会。
-             * 为什么封顶——校时全程要独占 ESP 串口十秒级（退透传+配置+取时间+恢复），
-             * 若 AT 固件不支持 CIPSNTP 或 NTP 被墙，原来会每轮(10s)都重试一次，
-             * 把心跳和 MQTT 发布全挤掉，表现出来像"连上了却发不出数据/经常掉线"。 */
-            if (!Clock_IsSynced() && sntp_tries < 3)
+            /* SNTP 校时：封顶 5 次。
+             * 为什么封顶——校时全程要独占 ESP 串口（退透传+配置+等对时+恢复，单次可到
+             * 十几秒），若 AT 固件不支持 CIPSNTP 或 NTP 被墙，无限重试会把心跳和 MQTT
+             * 发布全挤掉，表现出来像"连上了却发不出数据/经常掉线"。
+             * （"模块还没对上 NTP"的等待已在 wifi_time_sync_locked 内部轮询吸收，不耗次数） */
+            if (!Clock_IsSynced() && sntp_tries < 5)
             {
                 sntp_tries++;
                 if (wifi_time_sync_locked() != 0)
@@ -327,9 +344,11 @@ void UI(void)
         {
             last_uptime = uptime;
             page_main_update_uptime(uptime);					//更新ui时间显示
-            uint8_t hh, mm, ss;
-            Clock_GetTime(&hh, &mm, &ss);
-            page_main_update_clock(hh, mm, ss, Clock_IsSynced());   //实时时间（未校时显示暗色）
+            uint16_t yr; uint8_t mo, dd, hh, mm, ss;
+            uint8_t synced = Clock_IsSynced();
+            Clock_GetDateTime(&yr, &mo, &dd, &hh, &mm, &ss);
+            page_main_update_clock(hh, mm, ss, synced);   //实时时间（未校时显示暗色）
+            page_main_update_date(yr, mo, dd, synced);    //左上角日期（未校时显示 --）
         }
 				
         lv_timer_handler();			//5毫秒刷新函数

@@ -17,7 +17,7 @@
 
 static lv_obj_t *label_temp, *label_humi, *label_light;
 static lv_obj_t *arc_temp, *arc_humi;
-static lv_obj_t *label_status, *label_uptime, *label_clock;
+static lv_obj_t *label_status, *label_uptime, *label_clock, *label_date;
 
 /* 所有数值控件收为本页静态，不导出全局句柄 */
 
@@ -79,6 +79,12 @@ lv_obj_t *page_main_create(void)
     lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);          /* 顶栏正中 */
 
+    label_date = lv_label_create(top);
+    lv_label_set_text(label_date, "--");
+    lv_obj_set_style_text_font(label_date, UI_FONT_ASCII, 0);
+    lv_obj_set_style_text_color(label_date, lv_color_hex(C_DIM), 0);
+    lv_obj_align(label_date, LV_ALIGN_LEFT_MID, 8, 0);   /* 左上角：校时后显示 2026-10-09 */
+
     label_status = lv_label_create(top);
     lv_label_set_text(label_status, LV_SYMBOL_WIFI " OFF");
     lv_obj_set_style_text_font(label_status, UI_FONT_ASCII, 0);  /* 含图标，必须用 montserrat */
@@ -129,7 +135,7 @@ lv_obj_t *page_main_create(void)
     lv_label_set_text(label_uptime, "运行 --:--:--");
     lv_obj_set_style_text_font(label_uptime, UI_FONT_CJK, 0);
     lv_obj_set_style_text_color(label_uptime, lv_color_hex(C_DIM), 0);
-    lv_obj_align_to(label_uptime, btn_set, LV_ALIGN_OUT_LEFT_MID, -8, 0);
+    lv_obj_align_to(label_uptime, btn_set, LV_ALIGN_OUT_LEFT_MID, -16, 0);
 
     /* ---- 光照读数卡片（无进度条）---- */
     lv_obj_t *card = lv_obj_create(scr);
@@ -184,20 +190,23 @@ void page_main_update_data(float temp, float humi, float light)
 void page_main_update_status(uint8_t wifi, uint8_t mqtt)
 {
     if (!label_status) return;
-    if (!wifi)
+    /* 判据顺序有讲究：wifi_connected 只是"最近一次 join 的结果"——模块开机
+     * 自己连上热点时它不会置 1，WiFi 半路掉了它也不会清 0，让它当第一判据
+     * 会撒谎。MQTT 能在线就必然踩着一条活的 WiFi 连接，所以以它为最高优先。 */
+    if (mqtt)
     {
-        lv_label_set_text(label_status, LV_SYMBOL_WIFI " OFF");
-        lv_obj_set_style_text_color(label_status, lv_color_hex(C_FAIL), 0);
+        lv_label_set_text(label_status, LV_SYMBOL_WIFI " ONLINE");
+        lv_obj_set_style_text_color(label_status, lv_color_hex(C_OK), 0);
     }
-    else if (!mqtt)
+    else if (wifi)
     {
         lv_label_set_text(label_status, LV_SYMBOL_WIFI " NO CLOUD");
         lv_obj_set_style_text_color(label_status, lv_color_hex(C_WARN), 0);
     }
     else
     {
-        lv_label_set_text(label_status, LV_SYMBOL_WIFI " ONLINE");
-        lv_obj_set_style_text_color(label_status, lv_color_hex(C_OK), 0);
+        lv_label_set_text(label_status, LV_SYMBOL_WIFI " OFF");
+        lv_obj_set_style_text_color(label_status, lv_color_hex(C_FAIL), 0);
     }
 }
 
@@ -216,4 +225,16 @@ void page_main_update_clock(uint8_t h, uint8_t m, uint8_t s, uint8_t synced)
     /* 未校时（没联网 SNTP 成功过、也没手动设过）→ 暗色，别装成准的 */
     lv_obj_set_style_text_color(label_clock,
                                 lv_color_hex(synced ? C_TEXT : C_DIM), 0);
+}
+
+void page_main_update_date(uint16_t y, uint8_t mo, uint8_t d, uint8_t synced)
+{
+    if (!label_date) return;
+    if (!synced) {
+        lv_label_set_text(label_date, "--");     /* 没校过时，日期没有可信来源，别显示种子假日期 */
+        lv_obj_set_style_text_color(label_date, lv_color_hex(C_DIM), 0);
+        return;
+    }
+    lv_label_set_text_fmt(label_date, "%04u-%02u-%02u", y, mo, d);
+    lv_obj_set_style_text_color(label_date, lv_color_hex(C_TEXT), 0);
 }

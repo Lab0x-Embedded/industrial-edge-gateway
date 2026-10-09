@@ -42,6 +42,8 @@ volatile uint8_t wifi_reconnect_request = 0;
 
 /* 异步扫描的共享状态（UI 只写 request，AT 任务写结果与 state） */
 volatile uint8_t wifi_scan_request = 0;
+volatile uint8_t wifi_timesync_request = 0;
+volatile uint8_t wifi_timesync_result = 0;
 volatile uint8_t wifi_scan_state = WIFI_SCAN_IDLE;
 volatile uint8_t wifi_ap_count = 0;
 char             wifi_ap_list[WIFI_AP_MAX][33];
@@ -459,7 +461,6 @@ int wifi_scan_locked(void)
 int wifi_time_sync_locked(void)
 {
     static char buf[192];
-    int n = 0;
     char cmd[96];
 
     /* 退不出透传就别发校时指令：会被当成 TCP 数据吃掉，还可能污染 MQTT 流 */
@@ -467,37 +468,71 @@ int wifi_time_sync_locked(void)
         return -1;
 
     snprintf(cmd, sizeof cmd, "AT+CIPSNTPCFG=1,%d,\"%s\"\r\n", SNTP_TIMEZONE, SNTP_SERVER);
-    ESP_SendCmd_OK(cmd, 2000);
+    /* 返回值不能无视：固件若不认数字时区会在这 ERROR（[AT] err 会亮原话），
+     * 配置失败时下面的查询会永远 1970 —— 早知道早排查 */
+    if (ESP_SendCmd_OK(cmd, 2000) != ESP_OK)
+        Log_Write(LOG_WARN, "sntp: cfg fail");
 
-    RingBuf_Clear();
-    HAL_UART_Transmit(&huart4, (uint8_t *)"AT+CIPSNTPTIME?\r\n", 18, 100);
+    /* CIPSNTPCFG 只是"配置"，模块首次真正对上 NTP 要几秒（解析服务器域名+发包）。
+     * 配置完立刻查多半还是 1970 —— 在这里轮询到年份像样为止（≤10s），
+     * 把"首查太早"吸收进一次调用，而不是烧掉 tasks.c 里那点重试次数。 */
     uint32_t t0 = HAL_GetTick();
-    while (HAL_GetTick() - t0 < 3000 && n < (int)sizeof(buf) - 1) {
-        uint8_t ch;
-        if (RingBuf_Read(&ch)) buf[n++] = (char)ch;
-        else                   vTaskDelay(5);
-    }
-    buf[n] = 0;
+    while (HAL_GetTick() - t0 < 10000)
+    {
+        int n = 0;
+        RingBuf_Clear();
+        HAL_UART_Transmit(&huart4, (uint8_t *)"AT+CIPSNTPTIME?\r\n", 18, 100);
+        uint32_t tq = HAL_GetTick();
+        while (HAL_GetTick() - tq < 2000 && n < (int)sizeof(buf) - 1) {
+            uint8_t ch;
+            if (RingBuf_Read(&ch)) buf[n++] = (char)ch;
+            else                   vTaskDelay(5);
+        }
+        buf[n] = 0;
 
-    /* 本函数只在线时被调用：恢复失败说明 TCP 已断，置离线让重连重建 */
+        /* 应答形如： +CIPSNTPTIME:Fri Oct  9 12:34:56 2026（ctime 格式，日/时补空格）
+         * 一把解析 星期 月 日 时:分:秒 年 —— 日期也要：主屏左上角显示，RTC 日期寄存器存档。
+         * 年份 <2000（典型 1970）= 模块还没对上 NTP，不算失败，等 500ms 再查 */
+        char mon[4] = {0};
+        int day = 0, hh = 0, mm = 0, ss = 0, yr = 0;
+        char *p = strstr(buf, "+CIPSNTPTIME:");
+        if (p == NULL ||
+            sscanf(p + 13, "%*3s %3s %d %d:%d:%d %d", mon, &day, &hh, &mm, &ss, &yr) != 6)
+        {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
+        /* 月名转号：十二个缩写在这张串里各出现一次，位置/3+1 即月份；
+         * %3 对齐检查是防脏数据卡进非月名子串 */
+        static const char mon_names[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+        const char *mp = strstr(mon_names, mon);
+        if (mp == NULL || (mp - mon_names) % 3 != 0 ||
+            yr < 2000 || yr > 2099 || day < 1 || day > 31 ||
+            hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 59)
+        {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
+
+        int mo = (int)(mp - mon_names) / 3 + 1;
+        int link_ok = (wifi_at_passthrough_enter() == 0);
+        Clock_SetDateTime((uint16_t)yr, (uint8_t)mo, (uint8_t)day,
+                          (uint8_t)hh, (uint8_t)mm, (uint8_t)ss);
+        dbg_print("[NET] sntp %04d-%02d-%02d %02d:%02d:%02d\r\n", yr, mo, day, hh, mm, ss);
+        if (!link_ok)
+        {
+            /* 本函数只在线时被调用：恢复失败说明 TCP 已断，置离线让重连重建 */
+            g_mqtt_connected = 0;
+            Log_Write(LOG_WARN, "sntp: link lost");
+        }
+        return 0;
+    }
+
+    /* 10s 都没等到像样的时间（多半 NTP 不通/固件不支持）：恢复透传干净收场 */
     if (wifi_at_passthrough_enter() != 0)
     {
         g_mqtt_connected = 0;
         Log_Write(LOG_WARN, "sntp: link lost");
     }
-
-    /* 应答形如： +CIPSNTPTIME:Fri Oct  9 12:34:56 2026
-     * "+CIPSNTPTIME:" 之后第一个冒号就是"时:分:秒"的分隔符（星期/月份里没冒号） */
-    char *p = strstr(buf, "+CIPSNTPTIME:");
-    if (!p) return (n == 0) ? -1 : -2;
-    char *t = strchr(p + 13, ':');
-    if (!t || (t - 2) < (p + 13)) return -2;
-
-    int hh = 0, mm = 0, ss = 0;
-    if (sscanf(t - 2, "%2d:%2d:%2d", &hh, &mm, &ss) != 3) return -2;
-    if (hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 59) return -2;
-
-    Clock_SetTime((uint8_t)hh, (uint8_t)mm, (uint8_t)ss);
-    dbg_print("[NET] sntp %02d:%02d:%02d\r\n", hh, mm, ss);
-    return 0;
+    return -2;
 }

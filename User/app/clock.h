@@ -1,7 +1,7 @@
 #ifndef CLOCK_H
 #define CLOCK_H
 /* ============================================================
- *  时间服务：给界面提供"现在几点"
+ *  时间服务：给界面提供"现在几点、今天几号"
  *
  *  为什么不用 RTC 直接走时：RTC 的时钟源是 LSI（见 Core/Src/rtc.c 与 .ioc
  *  里的 RCC_RTC_Clock_Source=LSI），LSI 典型误差 ±5%，做分钟级正确的表
@@ -14,8 +14,12 @@
 #include <stdint.h>
 
 void    Clock_Init(void);                                  /* 上电调用一次：定初值 */
-void    Clock_SetTime(uint8_t h, uint8_t m, uint8_t s);    /* 校时：更新走时 + 写 RTC + 打备份标记 */
+/* 校时：日期+时间一起给（SNTP 应答本来就带全量），更新走时 + 写 RTC 日期/时间 + 打备份标记 */
+void    Clock_SetDateTime(uint16_t y, uint8_t mo, uint8_t d,
+                          uint8_t h, uint8_t m, uint8_t s);
 void    Clock_GetTime(uint8_t *h, uint8_t *m, uint8_t *s);
+void    Clock_GetDateTime(uint16_t *y, uint8_t *mo, uint8_t *d,
+                          uint8_t *h, uint8_t *m, uint8_t *s);
 uint8_t Clock_IsSynced(void);                              /* 1 = 已经校过时（SNTP/手动） */
 
 #endif

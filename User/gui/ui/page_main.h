@@ -9,4 +9,6 @@ void page_main_update_uptime(uint32_t seconds);
 /* 实时时间：synced=0 表示还没校过时（SNTP 没成功 / 没手动设过），
  * 界面把这种"近似时间"显示成暗色，避免看着像准的假时间。 */
 void page_main_update_clock(uint8_t h, uint8_t m, uint8_t s, uint8_t synced);
+/* 左上角日期：未校时显示 "--"（种子日期不可信，不展示） */
+void page_main_update_date(uint16_t y, uint8_t mo, uint8_t d, uint8_t synced);
 #endif

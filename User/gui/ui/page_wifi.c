@@ -287,24 +287,26 @@ static void wifi_timer_cb(lv_timer_t *t)
         modal_plain_row("扫描超时", C_WARN);
     }
 
+    /* 判据顺序与主屏一致：MQTT 在线必然踩着活的 WiFi —— 别让过期的
+     * wifi_connected（模块自连不置 1）把在线状态谎报成 WiFi FAIL。 */
     if (wifi_reconnect_request)
     {
         set_status("Connecting...", C_BLUE);
         lv_obj_add_state(btn_conn, LV_STATE_DISABLED);
     }
-    else if (!wifi_connected)
+    else if (g_mqtt_connected)
     {
-        set_status("WiFi FAIL", C_FAIL);
+        set_status("WiFi OK", C_OK);
         lv_obj_clear_state(btn_conn, LV_STATE_DISABLED);
     }
-    else if (!g_mqtt_connected)
+    else if (wifi_connected)
     {
         set_status("NO CLOUD", C_WARN);
         lv_obj_clear_state(btn_conn, LV_STATE_DISABLED);
     }
     else
     {
-        set_status("WiFi OK", C_OK);
+        set_status("WiFi FAIL", C_FAIL);
         lv_obj_clear_state(btn_conn, LV_STATE_DISABLED);
     }
 }
@@ -347,9 +349,9 @@ void page_wifi_open(void)
         lv_obj_t *btn_list = make_btn(scr_wifi, 104, 30, 210, 42, C_TRACK, "WiFi 列表");
         lv_obj_add_event_cb(btn_list, btn_list_click, LV_EVENT_CLICKED, NULL);
 
-        /* ---- 第 2 行：密码（整行 —— 省下的宽度全给输入） ---- */
+        /* ---- 第 2 行：密码 + 连接（与 SSID 行同构：输入 198 + 按钮 104） ---- */
         ta_pass = lv_textarea_create(scr_wifi);
-        lv_obj_set_size(ta_pass, 300, 30);
+        lv_obj_set_size(ta_pass, 198, 30);
         lv_obj_align(ta_pass, LV_ALIGN_TOP_LEFT, 6, 76);
         lv_textarea_set_one_line(ta_pass, true);
         lv_textarea_set_password_mode(ta_pass, true);
@@ -358,20 +360,19 @@ void page_wifi_open(void)
         ui_style_textarea(ta_pass);
         lv_obj_add_event_cb(ta_pass, ta_focus_cb, LV_EVENT_FOCUSED, NULL);
 
-        /* ---- 第 3 行：连接 + 状态 ---- */
-        btn_conn = make_btn(scr_wifi, 198, 30, 6, 110, C_BLUE, "连接");
+        btn_conn = make_btn(scr_wifi, 104, 30, 210, 76, C_BLUE, "连接");
         lv_obj_add_event_cb(btn_conn, btn_connect_click, LV_EVENT_CLICKED, NULL);
 
+        /* 连接状态挂标题栏右上角：下面整块高度让给键盘 */
         label_st = lv_label_create(scr_wifi);
-        lv_obj_set_size(label_st, 104, 30);
-        lv_label_set_long_mode(label_st, LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_font(label_st, UI_FONT_ASCII, 0);
-        lv_obj_align(label_st, LV_ALIGN_TOP_LEFT, 210, 110);
+        lv_obj_align(label_st, LV_ALIGN_TOP_RIGHT, -8, 8);
         set_status("--", C_DIM);
 
-        /* 底部键盘常驻（本页核心交互是输入）：压到 92px，上面三行各 30px */
+        /* 底部键盘常驻（本页核心交互是输入）：输入区只剩两行，
+         * 键盘从 92 加高到 128，误触率低很多 */
         kb = lv_keyboard_create(scr_wifi);
-        lv_obj_set_size(kb, 320, 92);
+        lv_obj_set_size(kb, 320, 128);
         lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
         ui_style_keyboard(kb);
 

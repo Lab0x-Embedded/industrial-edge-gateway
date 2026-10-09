@@ -251,6 +251,11 @@ void MQTT_Init(void) {
   }
 
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
+  /* 关掉模块的"开机自动连上次热点"：它和我们马上要发的 CWJAP 是并发的，
+   * 撞上就是 "busy p..." → CWJAP 15s 超时 → wifi_connected=0；而模块自己
+   * 却连上了，CIPSTART 照样成功 —— 结果是云在线、校时都做了，UI 却显示
+   * WiFi OFF（旗子和事实脱节）。入网只认我们发的 CWJAP 这一条路。 */
+  ESP_SendCmd_OK("AT+CWAUTOCONN=0\r\n", 2000);
   wifi_join();                      /* 失败原因由 wifi_join 自己写日志页 */
   vTaskDelay(500);
 
@@ -282,6 +287,11 @@ void MQTT_Init(void) {
     mqtt_send_subscribe();
     g_mqtt_connected = 1;
     Log_Write(LOG_INFO, "CONNECT FINISH");
+    /* 连上就当场校一次时：原来挂在 10s 心跳循环里且"校过就不再跑"——等得久，
+     * 且 RTC 走 LSI 会慢慢漂。这里顺手对表的代价只有几秒，失败不影响在线
+     * 状态，心跳循环里还留着"未校时兜底重试"。 */
+    if (wifi_time_sync_locked() != 0)
+      Log_Write(LOG_WARN, "sntp fail (clock stays dim)");
   } else {
     g_mqtt_connected = 0;
     Log_Write(LOG_WARN, "connack failed");
@@ -337,6 +347,9 @@ void RE_MQTT_Init(void) {
     mqtt_send_subscribe();
     g_mqtt_connected = 1;
     Log_Write(LOG_INFO, "reconnect success");
+    /* 同 MQTT_Init：连上即校时，别等心跳循环 */
+    if (wifi_time_sync_locked() != 0)
+      Log_Write(LOG_WARN, "sntp fail (clock stays dim)");
   } else {
     g_mqtt_connected = 0;
     Log_Write(LOG_WARN, "reconnect: connack failed");
