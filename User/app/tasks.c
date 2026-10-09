@@ -305,14 +305,6 @@ void UI(void)
         if (xQueueReceive(lvgl_data_queue, &disp_data, 0) == pdPASS)
         {
             page_main_update_data(disp_data.temp, disp_data.shi,disp_data.light);
-            
-            if(HAL_GPIO_ReadPin(TP_PEN_GPIO_Port, LCD_BL_Pin) == GPIO_PIN_RESET)
-            {
-                dbg_print("数据亮屏,此时P10是0,lcd_bl_en = %d\n", lcd_bl_en);
-            }
-            else{
-                dbg_print("数据亮屏,此时P10是1,lcd_bl_en = %d\n", lcd_bl_en);
-            }
         }
 
         // WiFi/MQTT 状态变更也刷新亮屏

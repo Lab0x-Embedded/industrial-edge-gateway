@@ -4,6 +4,9 @@
 #include <string.h>
 #include <stdio.h>
 
+/* cloud.c 里定义的调试串口输出（UART5）；不 include cloud.h，只声明 */
+extern void dbg_print(const char *fmt, ...);
+
 // 引用阶段一创建的全局环形缓冲区
 extern uint8_t buffer[BUFFER_SIZE];
 
@@ -51,6 +54,18 @@ ESP_Status_t ESP_SendCmd(const char *cmd, const char *expected_ack, uint32_t tim
                 
                 // 检查是否出错
                 if (strstr(line, "ERROR") != NULL) {
+                    dbg_print("[AT] err: %s\r\n", line);
+                    return ESP_ERROR;
+                }
+
+                /* "FAIL"/"Fail" 也算失败：CIPSTART 失败的应答是 "CONNECT FAIL"，
+                 * 里面恰好含匹配词 "CONNECT" —— 不加这条，建连失败会被上面的
+                 * 关键词匹配当成成功放行，随后 CIPSEND 必然拿不到 ">"，
+                 * 现场看到的就是"没有 tcp fail、只有 passthrough fail"。
+                 * （CWJAP 失败应答也是 "FAIL" 结尾，顺带让 wifi_join 判得又快又准；
+                 *   DNS 失败是 "DNS Fail"，大小写两种都查。） */
+                if (strstr(line, "FAIL") != NULL || strstr(line, "Fail") != NULL) {
+                    dbg_print("[AT] fail: %s\r\n", line);
                     return ESP_ERROR;
                 }
                 
@@ -66,6 +81,12 @@ ESP_Status_t ESP_SendCmd(const char *cmd, const char *expected_ack, uint32_t tim
         }
     }
     
+    /* 超时也可能"手里攥着半句话"：模块回了东西但没凑成一行（或没包含关键词）。
+     * 把残行打出来，现场才知道模块到底说了什么，而不是只有一句笼统的 timeout。 */
+    if (line_pos > 0) {
+        line[line_pos] = '\0';
+        dbg_print("[AT] last: %s\r\n", line);
+    }
     return ESP_TIMEOUT;
 }
 
@@ -74,66 +95,3 @@ ESP_Status_t ESP_SendCmd_OK(const char *cmd, uint32_t timeout_ms)
 {
     return ESP_SendCmd(cmd, "OK", timeout_ms);
 }
-
-
-
-
-/**
- * @brief  等待环形缓冲区中出现指定关键字（超时返回）
- * @param  keyword   要匹配的关键字（字符串）
- * @param  timeout_ms 超时时间（毫秒）
- * @return 1-匹配成功，0-超时未匹配
- */
-//int ESP_WaitFor(const char *keyword, uint32_t timeout_ms)
-//{
-//    int kw_len = strlen(keyword);
-//    if (kw_len == 0) return 1;  // 空字符串视为立即成功
-
-//    char match_buf[kw_len];     // 滑动窗口，保存最近 kw_len 个字节
-//    memset(match_buf, 0, kw_len);
-//    int pos = 0;                // 累计已读取字节数
-//    uint32_t start = HAL_GetTick();
-
-//    while ((HAL_GetTick() - start) < timeout_ms)
-//    {
-//        uint8_t ch;
-//        if (RingBuf_Read(&ch))
-//        {
-//            // 将新字节写入环形窗口
-//            match_buf[pos % kw_len] = ch;
-//            pos++;
-
-//            // 只有填满窗口后才开始匹配
-//            if (pos >= kw_len)
-//            {
-//                // 窗口中最旧字节的索引（即最近 kw_len 个字节的起始位置）
-//                int start_idx = (pos - kw_len) % kw_len;
-
-//                // 数据在 match_buf 中可能分成两段：
-//                // 第一段：从 start_idx 到数组末尾
-//                // 第二段：从 0 到 start_idx-1
-//                int first_len = kw_len - start_idx;       // 第一段长度
-//                int second_len = kw_len - first_len;      // 第二段长度，即 start_idx
-
-//                // 比较第一段（如果 first_len > 0）
-//                if (first_len > 0 &&
-//                    memcmp(&match_buf[start_idx], keyword, first_len) != 0)
-//                {
-//                    continue;   // 第一段不匹配，直接继续
-//                }
-
-//                // 比较第二段（如果存在）
-//                if (second_len > 0 &&
-//                    memcmp(&match_buf[0], keyword + first_len, second_len) != 0)
-//                {
-//                    continue;
-//                }
-
-//                // 两段都匹配成功
-//                return 1;
-//            }
-//        }
-//        // 可以适当加一个短延时避免忙等待，但视系统而定，此处省略
-//    }
-//    return 0;   // 超时
-//}

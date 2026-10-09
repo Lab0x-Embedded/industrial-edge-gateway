@@ -215,12 +215,24 @@ static int mqtt_send_subscribe(void) {
 }
 
 /* 等待并校验 CONNACK：0x20 0x02 xx 0x00（返回码 0 = 接受连接）。
- * 只有这一步通过才允许置在线。 */
+ * 只有这一步通过才允许置在线。失败时把实际收到的字节打到调试口：
+ * 第 4 字节是返回码（4=用户名/密码被拒、5=未授权），
+ * 一个字节都没有则说明 CONNECT 没到平台（模块没在真透传/链路已断）。 */
 static int mqtt_wait_connack(void) {
   uint8_t connack[4];
   int ret = esp_recv_raw(0, connack, 4, 3000);
-  return (ret == 4 && connack[0] == 0x20 && connack[1] == 0x02 &&
-          connack[3] == 0x00);
+  if (ret == 4 && connack[0] == 0x20 && connack[1] == 0x02 &&
+      connack[3] == 0x00)
+    return 1;
+  if (ret > 0) {
+    dbg_print("[MQTT] connack(%d):", ret);
+    for (int i = 0; i < ret && i < 4; i++)
+      dbg_print(" %02X", connack[i]);
+    dbg_print("\r\n");
+  } else {
+    dbg_print("[MQTT] connack: no reply\r\n");
+  }
+  return 0;
 }
 
 /* ESP8266 uart1 波特率115200 DMA空闲中断*/
@@ -241,6 +253,13 @@ void MQTT_Init(void) {
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
   wifi_join();                      /* 失败原因由 wifi_join 自己写日志页 */
   vTaskDelay(500);
+
+  /* 透传前置（Espressif 透传流程的既定顺序）：CIPMUX=0 是 CIPMODE=1 的前提；
+   * CIPMODE 必须在 CIPSTART 之前设 —— 部分固件对"TCP 已建立后再设 CIPMODE"
+   * 回 ERROR，那正是日志里"没有 tcp fail、只有 passthrough fail"的一种成因。
+   * CIPMODE 不进 flash，AT+RST 后清零，所以 RE_MQTT_Init 也要各设一遍。 */
+  ESP_SendCmd_OK("AT+CIPMUX=0\r\n", 2000);
+  ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000);
 
   snprintf(cmd, sizeof cmd, "AT+CIPSTART=\"TCP\",\"%s\",%u\r\n", p->host,
            (unsigned)p->port);
@@ -295,6 +314,11 @@ void RE_MQTT_Init(void) {
 
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
   wifi_join();                      /* 失败原因由 wifi_join 自己写日志页 */
+
+  /* 同 MQTT_Init：CIPMUX/CIPMODE 必须在 CIPSTART 之前设好（AT+RST 后 CIPMODE 清零） */
+  ESP_SendCmd_OK("AT+CIPMUX=0\r\n", 2000);
+  ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000);
+
   snprintf(cmd, sizeof cmd, "AT+CIPSTART=\"TCP\",\"%s\",%u\r\n", p->host,
            (unsigned)p->port);
   if (ESP_SendCmd(cmd, "CONNECT", 5000) != ESP_OK) {

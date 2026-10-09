@@ -142,28 +142,44 @@ static void wifi_query_ip(void)
 
 int wifi_join(void)
 {
-    char cmd[160];
-    char msg[80];
+    char cmd[192];              /* 160→192：SSID 32 + PASS 64 + 转义 + 固定部分，留余量 */
+    char msg[128];              /* 80→128：SSID 是 UTF-8 中文时 32 字节能占满 80 */
     ESP_Status_t r;
     wifi_conn_load();
 
-    snprintf(cmd, sizeof cmd, "AT+CWJAP=\"%s\",\"%s\"\r\n", wifi_ssid, wifi_pass);
+    /* 显式检查 snprintf 返回值：SSID/密码里若含需要转义的字符（" \），
+     * 或者以后密码改成 64 位且含转义，cmd 可能被截断。截断后发出去的是
+     * 半截 AT 命令，模块回 ERROR，会被下面误判成"密码错"——现场排查跑偏。 */
+    int n = snprintf(cmd, sizeof cmd, "AT+CWJAP=\"%s\",\"%s\"\r\n",
+                     wifi_ssid, wifi_pass);
+    if (n < 0 || n >= (int)sizeof cmd) {
+        Log_Write(LOG_WARN, "wifi cmd too long");
+        dbg_print("[NET] wifi join FAILED: cmd overflow\r\n");
+        wifi_connected = 0;
+        return 0;
+    }
+
     /* 超时 5s → 15s：CWJAP 要扫描+关联+DHCP，正常 3~8s，信号弱/路由器 DHCP 慢
      * 时更久。5s 会在正常慢的情况下误判失败，而失败之后紧接着的 CIPSTART
      * 必然连不上 —— 表现就是"偶尔/经常连不上"，且日志只有一句 join failed。 */
     r = ESP_SendCmd(cmd, "WIFI GOT IP", 15000);
+
     /* 刚复位后模块常还在自动重连旧 AP，此时 CWJAP 会被回 "busy p..."（ESP_ERROR）。
-     * 那不是密码错 —— 给它一次机会再判失败，否则会把"模块忙"误报成"密码/SSID 错"。 */
+     * 那不是密码错 —— 给它一次机会再判失败，否则会把"模块忙"误报成"密码/SSID 错"。
+     * 无法区分 busy 和密码错，重试对密码错是白等：延时从 1.5s 缩到 500ms，
+     * 密码错时少等 1s；模块忙时 500ms 通常也够它退出自动重连。 */
     if (r == ESP_ERROR) {
-        vTaskDelay(pdMS_TO_TICKS(1500));
+        vTaskDelay(pdMS_TO_TICKS(500));
         r = ESP_SendCmd(cmd, "WIFI GOT IP", 15000);
     }
+
     if (r == ESP_OK) {
         wifi_connected = 1;
         dbg_print("[NET] wifi OK\r\n");
         wifi_query_ip();
         return 1;
     }
+
     wifi_connected = 0;
     /* 区分两种失败，现场能直接看日志页判断是"密码/SSID 错"还是"信号/超时" */
     snprintf(msg, sizeof msg, r == ESP_ERROR ? "wifi denied: %s" : "wifi timeout: %s",
@@ -267,15 +283,31 @@ int wifi_at_wait_ready(uint32_t timeout_ms)
 /* 恢复透传。返回 0=拿到 ">" 提示、透传真的起来了；-1=没拿到（多半是 TCP 已经
  * 断了 —— 此时模块停在"CIPMODE=1 但没在发送"的中间态，后续裸发的 MQTT 字节
  * 会被模块当 AT 指令吃成 ERROR）。调用方拿到 -1 应该把 g_mqtt_connected 置 0，
- * 让重连流程（RE_MQTT_Init 会 AT+RST）去重建，而不是继续往串口灌数据。 */
+ * 让重连流程（RE_MQTT_Init 会 AT+RST）去重建，而不是继续往串口灌数据。
+ *
+ * 这里只发 CIPSEND、不再发 CIPMODE=1：所有调用点都保证 CIPMODE 已经是 1 ——
+ * 冷启动/重连在 CIPSTART 之前设好（cloud.c），扫描/校时恢复路径里 +++
+ * 只退出发送、不清 CIPMODE；连接还挂着时对部分固件再设 CIPMODE 反而回 ERROR。 */
 int wifi_at_passthrough_enter(void)
 {
-    if (ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000) != ESP_OK)
-        return -1;
-    if (ESP_SendCmd("AT+CIPSEND\r\n", ">", 3000) != ESP_OK)
-        return -1;
-    RingBuf_Clear();
-    return 0;
+    /* ">" 提示符是流式字节，不保证后面跟 \r\n；ESP_SendCmd 按行匹配可能永远
+     * 凑不满一行。这里按字节流等 '>'，echo/OK/杂散应答天然被跳过。 */
+    HAL_UART_Transmit(&huart4, (uint8_t *)"AT+CIPSEND\r\n", 12, 100);
+    uint32_t t0 = HAL_GetTick();
+    for (;;) {
+        uint8_t ch;
+        while (RingBuf_Read(&ch)) {
+            if (ch == '>') {
+                RingBuf_Clear();
+                return 0;
+            }
+        }
+        if (HAL_GetTick() - t0 > 3000) {
+            dbg_print("[NET] cipsend: no '>' prompt\r\n");
+            return -1;
+        }
+        vTaskDelay(1);
+    }
 }
 
 /* ============================================================
