@@ -5,7 +5,7 @@
 
 - CubeMX 工程：`industrial-edge-gateway.ioc`（CubeMX 6.18.1 / FW_F4 V1.28.3，工具链 CMake+GCC）
 - 配套从机板：`ModbusSlave/`（第二块 F407 板模拟 0x01 温湿度[DHT11 实测] / 0x02 光照[PF3 ADC] 两台 Modbus 从机）
-- 资源占用（网关）：Flash ≈390KB / 1MB（37%），RAM ≈110KB / 128KB（83.5%）；从机：Flash 27KB，RAM 2.5KB
+- 资源占用（网关，Debug 构建实测）：Flash ≈441KB / 1MB（42%），RAM ≈114KB / 128KB（87%）；从机：Flash 27KB，RAM 2.5KB
 
 ## 使用方法（CubeMX / VS Code）
 
@@ -21,12 +21,12 @@
 ```
 Core/                  CubeMX 生成（时钟168M、FSMC、UART4+DMA、USART2、UART5调试、SPI1、TIM3、TIM4时基、RTC、IWDG、FreeRTOS）
 User/
-  app/                 业务任务调度（tasks.c，原 Taskhandel）
+  app/                 业务任务调度（tasks.c，原 Taskhandel）、时间服务（clock.c：单调 tick 走时 + RTC/编译时间定初值）
   bsp/                 板级驱动：lcd.c（FSMC 并口 ILI9341）、touch.c（XPT2046 + 两点校准）
   modbus/              Modbus RTU 主站（USART2 PA2/PA3 9600，方向脚 PG6；数据有效性门控）
-  net/                 cloud.c（云平台 profile 层：E2/OneNET）、esp_at.c（AT 驱动）、esp_uart.c（UART4 DMA 接收环形缓冲）
+  net/                 cloud.c（云平台 profile 层：E2/OneNET）、wifi_conn.c（入网/凭据/热点扫描/SNTP 校时）、esp_at.c（AT 驱动）、esp_uart.c（UART4 DMA 接收环形缓冲）
   storage/             w25qxx.c（W25Q128 SPI1 PB3/4/5，CS=PG8 驱动）、log.c（日志 0~4MB）、cache.c（断网补传缓存 4~8MB）
-  gui/                 LVGL 8.3（src/）、porting/（显示/触摸移植）、ui/（界面页面）、lv_conf.h
+  gui/                 LVGL 8.3（src/）、porting/（显示/触摸移植）、ui/（界面页面 + ui_theme.c 色板/样式 + font_cjk_14.c 中文字体）、lv_conf.h
 ModbusSlave/           从机固件（独立 CMake 工程）：DHT11=PA15、光敏=PF3(ADC3_IN9)、RS485 从机 0x01/0x02
 tools/                 modbus_sim.py（PC 模拟从机）、modbus_master_test.py（PC 当主机直测从机板）
 docs/                  系统架构图（mermaid）、调试排查手册（18 个实战案例）
@@ -89,3 +89,17 @@ make reset / make openocd        # 复位 / 起 gdbserver
 3. 串口终端（UART5 115200）看联网阶段输出与 `[LOG]` 日志镜像；屏幕"日志"页同内容。
 4. 接从机板 RS485（A/A、B/B、共地）：屏幕温湿度/光照 800ms 刷新（DHT11 实测 + 光敏 ADC）；日志出现 `modbus back online`。
 5. WIFI 座插 ESP8266：MQTT 连上后屏幕绿 ONLINE；断网测缓存（日志 WARN）、恢复后自动补传（每轮 ≤5 条）。
+
+## 界面（LVGL，320x240 触摸）
+
+| 页面 | 内容 |
+|---|---|
+| 主界面 | 中文标题「边缘网关监控」+ WiFi/云状态；温/湿双弧盘仪表；**实时时间 HH:MM:SS** + 运行时长 + 设置入口；光照读数（只有数值，无进度条） |
+| 设置 | WiFi 配置 / 系统运行日志 / 关于设备 |
+| WiFi 配置 | 热点下拉选择器（进页自动扫描，扫描在 AT 任务里异步做、界面不卡）+ 密码 → 连接；点「手动输入」可手打 SSID |
+| 系统运行日志 | W25Q 日志倒序读取，最新置顶，INFO/WARN/ERROR 三色，时间戳是**运行时长**（`T+` 前缀，不是墙上时间） |
+| 关于设备 | 固件/板卡/LVGL/Flash/云平台 + IP、运行时长、当前时间（每秒刷新） |
+
+**实时时间从哪来**：走时基于 HAL 时基（HSE 晶振精度，不用漂移大的 LSI）；联网成功后由 ESP8266 SNTP 校一次绝对时间；板上有 VBAT 电池时 RTC 备份域做断电保持。
+没校过时的钟显示为**暗色**（不假装是准的），连上云后自动变亮。
+色板与控件样式统一在 `User/gui/ui/ui_theme.h`，换主题只改这一个文件；中文字体是 `ui/font_cjk_14.c`（14px 抗锯齿，含界面用到的全部汉字 + ASCII，**不含 LV_SYMBOL_* 图标字形**——图标标签必须继续用 montserrat）。

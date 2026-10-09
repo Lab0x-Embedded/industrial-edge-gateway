@@ -37,6 +37,7 @@
 #include "w25qxx.h"
 #include "log.h"
 #include "cache.h"
+#include "clock.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -121,6 +122,7 @@ int main(void)
   HAL_TIM_Base_Start_IT(&htim3);             /* TIM3 1ms: LVGL 心跳 */
   Log_Init();
   FlashCache_Init();                         /* 定位补传缓存写地址 */
+  Clock_Init();                              /* 时间服务：RTC 备份域 / 编译时间定初值 */
   RS485_RX;                                  /* 485 默认接收 */
   HAL_UARTEx_ReceiveToIdle_DMA(&huart4, a, sizeof(a));   /* ESP8266 DMA 空闲接收 */
   __HAL_DMA_DISABLE_IT(&hdma_uart4_rx, DMA_IT_HT);

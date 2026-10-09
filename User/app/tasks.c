@@ -25,6 +25,7 @@
 #include "tasks.h"
 #include "w25qxx.h"
 #include "log.h"
+#include "clock.h"
 #include "cache.h"
 #include <stdlib.h>
 
@@ -168,19 +169,31 @@ void AT(void)
     uint8_t heart_fail = 0;  // 心跳连续失败次数
     for (;;)
     {
-        /* 分段等待：WiFi 设置页的重连请求可即时打断 10s 心跳间隔 */
-        for (int i = 0; i < 10 && !wifi_reconnect_request; i++)
+        /* 分段等待：WiFi 设置页的重连请求 / 扫描请求可即时打断 10s 心跳间隔 */
+        for (int i = 0; i < 10 && !wifi_reconnect_request && !wifi_scan_request; i++)
             vTaskDelay(1000);
         xSemaphoreTake(uart1_mutex, portMAX_DELAY);	//阻塞获取互斥锁
+
+        /* WiFi 设置页的点名扫描：在持锁的 AT 语境里做（UI 线程只置标志，不阻塞界面） */
+        if (wifi_scan_request)
+        {
+            wifi_scan_request = 0;
+            wifi_scan_state = (wifi_scan_locked() < 0) ? WIFI_SCAN_FAIL : WIFI_SCAN_DONE;
+        }
+
         /* WiFi 设置页请求重连：置离线走 RE 全量重连（新凭据已由 wifi_conn_save 生效）。
          * 标志必须等重连尝试完整跑完才清——UI 靠它显示 Connecting 全程。 */
         uint8_t wifi_req = wifi_reconnect_request;
         if (wifi_req) {
             g_mqtt_connected = 0;             // 设置页保存了新凭据：强制全量重连
         }
-				RingBuf_Clear();														//关键点 先清空缓冲区 否则有脏数据影响判断
+				RingBuf_Clear();											//关键点 先清空缓冲区 否则有脏数据影响判断
         if (g_mqtt_connected)
         {
+            /* 在线但还没校过时 → SNTP 校一次（校成功后不再问，串口时间省下来给心跳） */
+            if (!Clock_IsSynced())
+                wifi_time_sync_locked();
+
             // 发送 PINGREQ
             MQTT_SendPing();
 
@@ -294,12 +307,15 @@ void UI(void)
         }
 
 				
-				//更新运行时间
+        //更新运行时间 + 实时时间（同一个每秒节奏，省一次 tick 比较）
         uint32_t uptime = (xTaskGetTickCount() - start_tick) / configTICK_RATE_HZ;			//秒数
         if (uptime != last_uptime)
         {
             last_uptime = uptime;
             page_main_update_uptime(uptime);					//更新ui时间显示
+            uint8_t hh, mm, ss;
+            Clock_GetTime(&hh, &mm, &ss);
+            page_main_update_clock(hh, mm, ss, Clock_IsSynced());   //实时时间（未校时显示暗色）
         }
 				
         lv_timer_handler();			//5毫秒刷新函数

@@ -1,5 +1,13 @@
-/* 主监控页 · 深色工业风：双仪表盘（温/湿）+ 光照横条 + 顶栏状态/时长/设置入口 */
+/* 主监控页 · 深色工业风
+ * 版面（320x240）：
+ *   y   0-26  顶栏：中文标题「边缘网关监控」+ 右上 WiFi/云 状态
+ *   y  30-160 双仪表盘：温度 / 湿度（130px 弧盘）
+ *   y 164-194 实时时间条：HH:MM:SS（24px）+ 运行时长 + 设置入口
+ *   y 198-234 光照读数卡片：只有数值，没有进度条（用户明确要求去掉橙色条）
+ * 色板与控件样式统一走 ui_theme.h，本页不再自己写色值。
+ */
 #include "lvgl.h"
+#include "ui_theme.h"
 #include "page_settings.h"
 #include "tasks.h"
 #include "FreeRTOS.h"
@@ -7,25 +15,11 @@
 #include "stm32f4xx.h"
 #include <stdio.h>
 
-/* ---- 设计系统：石板深色（各页共用同一套色板，改主题只动这里）----
- * 背景/卡片/轨道三级灰阶 + 每项数据一个强调色，数字用内置 Montserrat 字体 */
-#define C_BG        0x0F172A   /* 背景 slate-900 */
-#define C_CARD      0x1E293B   /* 卡片 slate-800 */
-#define C_TRACK     0x334155   /* 轨道/边框 slate-700 */
-#define C_TEXT      0xE2E8F0
-#define C_TEXT_DIM  0x94A3B8
-#define C_TEMP      0xF87171   /* 温度 red-400 */
-#define C_HUMI      0x2DD4BF   /* 湿度 teal-400 */
-#define C_LIGHT     0xFBBF24   /* 光照 amber-400 */
-#define C_OK        0x34D399
-#define C_FAIL      0xF87171
-#define C_WARN      0xFBBF24
-
 static lv_obj_t *label_temp, *label_humi, *label_light;
-static lv_obj_t *arc_temp, *arc_humi, *bar_light;
-static lv_obj_t *label_status, *label_uptime;
+static lv_obj_t *arc_temp, *arc_humi;
+static lv_obj_t *label_status, *label_uptime, *label_clock;
 
-/* 所有数值控件收为本页静态，不再像旧版那样导出全局句柄 */
+/* 所有数值控件收为本页静态，不导出全局句柄 */
 
 /* 造一个仪表盘：lv_arc 去掉旋钮 + 圆头弧线，135°~45° 扫 270° 的经典表盘形态；
  * 中心放大号数值，弧线下沿放名称标签 */
@@ -34,10 +28,11 @@ static lv_obj_t *make_gauge(lv_obj_t *parent, int32_t min, int32_t max,
 {
     lv_obj_t *arc = lv_arc_create(parent);
     lv_obj_set_size(arc, 130, 130);
+    lv_obj_remove_style_all(arc);               /* 先清默认主题（含旋钮那套），再自绘 */
+    lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_arc_set_range(arc, min, max);
     lv_arc_set_bg_angles(arc, 135, 45);
     lv_arc_set_value(arc, min);
-    lv_obj_remove_style(arc, NULL, LV_PART_KNOB);          /* 隐藏旋钮，纯仪表形态 */
     lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_arc_width(arc, 12, LV_PART_MAIN);
     lv_obj_set_style_arc_color(arc, lv_color_hex(C_TRACK), LV_PART_MAIN);
@@ -48,9 +43,9 @@ static lv_obj_t *make_gauge(lv_obj_t *parent, int32_t min, int32_t max,
 
     lv_obj_t *lab_name = lv_label_create(arc);
     lv_label_set_text(lab_name, name);
-    lv_obj_set_style_text_font(lab_name, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lab_name, lv_color_hex(C_TEXT_DIM), 0);
-    lv_obj_align(lab_name, LV_ALIGN_CENTER, 0, 20);
+    lv_obj_set_style_text_font(lab_name, UI_FONT_ASCII, 0);
+    lv_obj_set_style_text_color(lab_name, lv_color_hex(C_DIM), 0);
+    lv_obj_align(lab_name, LV_ALIGN_CENTER, 0, 22);
     return arc;
 }
 
@@ -63,89 +58,98 @@ static void btn_set_click(lv_event_t *e)
 lv_obj_t *page_main_create(void)
 {
     lv_obj_t *scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), 0);
-    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    ui_style_screen(scr);
 
-    /* ---- 顶栏：状态 | 设置 | 运行时长 ---- */
+    /* ---- 顶栏：中文标题 | 状态 ---- */
     lv_obj_t *top = lv_obj_create(scr);
     lv_obj_set_size(top, 320, 26);
     lv_obj_align(top, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_remove_style_all(top);
     lv_obj_set_style_bg_color(top, lv_color_hex(C_CARD), 0);
-    lv_obj_set_style_border_width(top, 0, 0);
-    lv_obj_set_style_radius(top, 0, 0);
+    lv_obj_set_style_bg_opa(top, LV_OPA_COVER, 0);
     lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *title = lv_label_create(top);
+    lv_label_set_text(title, "边缘网关监控");
+    lv_obj_set_style_text_font(title, UI_FONT_CJK, 0);   /* 中文标题用小字号（14px 抗锯齿） */
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 8, 0);
 
     label_status = lv_label_create(top);
     lv_label_set_text(label_status, LV_SYMBOL_WIFI " OFF");
-    lv_obj_set_style_text_font(label_status, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(label_status, UI_FONT_ASCII, 0);  /* 含图标，必须用 montserrat */
     lv_obj_set_style_text_color(label_status, lv_color_hex(C_FAIL), 0);
-    lv_obj_align(label_status, LV_ALIGN_LEFT_MID, 6, 0);
-
-    lv_obj_t *btn_set = lv_btn_create(top);
-    lv_obj_set_size(btn_set, 34, 20);
-    lv_obj_align(btn_set, LV_ALIGN_RIGHT_MID, -82, 0);
-    lv_obj_set_style_bg_color(btn_set, lv_color_hex(C_TRACK), 0);
-    lv_obj_set_style_radius(btn_set, 4, 0);
-    lv_obj_t *lab_set = lv_label_create(btn_set);
-    lv_label_set_text(lab_set, LV_SYMBOL_SETTINGS);
-    lv_obj_align(lab_set, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_text_color(lab_set, lv_color_hex(C_TEXT), 0);
-    lv_obj_add_event_cb(btn_set, btn_set_click, LV_EVENT_CLICKED, NULL);
-
-    label_uptime = lv_label_create(top);
-    lv_label_set_text(label_uptime, "00:00:00");
-    lv_obj_set_style_text_font(label_uptime, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(label_uptime, lv_color_hex(C_TEXT_DIM), 0);
-    lv_obj_align(label_uptime, LV_ALIGN_RIGHT_MID, -6, 0);
+    lv_obj_align(label_status, LV_ALIGN_RIGHT_MID, -8, 0);
 
     /* ---- 双仪表：温度 / 湿度 ----
-     * 130px 弧盘左右各一，量程对应传感器实际范围（温 -10~60℃，湿 0~100%） */
+     * 量程对应传感器实际范围（温 -10~60℃，湿 0~100%） */
     arc_temp = make_gauge(scr, -10, 60, C_TEMP, "TEMP C");
-    lv_obj_align(arc_temp, LV_ALIGN_TOP_LEFT, 14, 34);
+    lv_obj_align(arc_temp, LV_ALIGN_TOP_LEFT, 14, 30);
     label_temp = lv_label_create(arc_temp);
     lv_obj_set_style_text_font(label_temp, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(label_temp, lv_color_hex(C_TEMP), 0);
-    lv_obj_align(label_temp, LV_ALIGN_CENTER, 0, -6);
+    lv_obj_align(label_temp, LV_ALIGN_CENTER, 0, -8);
     lv_label_set_text(label_temp, "--");
 
     arc_humi = make_gauge(scr, 0, 100, C_HUMI, "HUMI %");
-    lv_obj_align(arc_humi, LV_ALIGN_TOP_RIGHT, -14, 34);
+    lv_obj_align(arc_humi, LV_ALIGN_TOP_RIGHT, -14, 30);
     label_humi = lv_label_create(arc_humi);
     lv_obj_set_style_text_font(label_humi, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(label_humi, lv_color_hex(C_HUMI), 0);
-    lv_obj_align(label_humi, LV_ALIGN_CENTER, 0, -6);
+    lv_obj_align(label_humi, LV_ALIGN_CENTER, 0, -8);
     lv_label_set_text(label_humi, "--");
 
-    /* ---- 光照横条卡片 ---- */
+    /* ---- 实时时间条：HH:MM:SS | 运行时长 | 设置 ---- */
+    lv_obj_t *card_t = lv_obj_create(scr);
+    lv_obj_set_size(card_t, 300, 30);
+    lv_obj_align(card_t, LV_ALIGN_TOP_MID, 0, 164);
+    ui_style_card(card_t, false);
+
+    label_clock = lv_label_create(card_t);
+    lv_label_set_text(label_clock, "--:--:--");
+    lv_obj_set_style_text_font(label_clock, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(label_clock, lv_color_hex(C_DIM), 0);  /* 未校时=暗色 */
+    lv_obj_align(label_clock, LV_ALIGN_LEFT_MID, 10, 0);
+
+    lv_obj_t *btn_set = lv_btn_create(card_t);
+    lv_obj_set_size(btn_set, 34, 22);
+    lv_obj_align(btn_set, LV_ALIGN_RIGHT_MID, -6, 0);
+    ui_style_btn(btn_set, C_TRACK, C_TEXT);
+    lv_obj_t *lab_set = lv_label_create(btn_set);
+    lv_label_set_text(lab_set, LV_SYMBOL_SETTINGS);
+    lv_obj_set_style_text_font(lab_set, UI_FONT_ASCII, 0);
+    lv_obj_center(lab_set);
+    lv_obj_add_event_cb(btn_set, btn_set_click, LV_EVENT_CLICKED, NULL);
+
+    label_uptime = lv_label_create(card_t);
+    lv_label_set_text(label_uptime, "运行 --:--:--");
+    lv_obj_set_style_text_font(label_uptime, UI_FONT_CJK, 0);
+    lv_obj_set_style_text_color(label_uptime, lv_color_hex(C_DIM), 0);
+    lv_obj_align_to(label_uptime, btn_set, LV_ALIGN_OUT_LEFT_MID, -8, 0);
+
+    /* ---- 光照读数卡片（无进度条）---- */
     lv_obj_t *card = lv_obj_create(scr);
-    lv_obj_set_size(card, 300, 56);
+    lv_obj_set_size(card, 300, 36);
     lv_obj_align(card, LV_ALIGN_BOTTOM_MID, 0, -6);
-    lv_obj_set_style_bg_color(card, lv_color_hex(C_CARD), 0);
-    lv_obj_set_style_border_color(card, lv_color_hex(C_TRACK), 0);
-    lv_obj_set_style_border_width(card, 1, 0);
-    lv_obj_set_style_radius(card, 8, 0);
-    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    ui_style_card(card, true);
 
     lv_obj_t *lab_ltitle = lv_label_create(card);
-    lv_label_set_text(lab_ltitle, LV_SYMBOL_EYE_OPEN " LIGHT lx");
-    lv_obj_set_style_text_font(lab_ltitle, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(lab_ltitle, lv_color_hex(C_TEXT_DIM), 0);
-    lv_obj_align(lab_ltitle, LV_ALIGN_TOP_LEFT, 10, 6);
+    lv_label_set_text(lab_ltitle, LV_SYMBOL_EYE_OPEN " LIGHT");
+    lv_obj_set_style_text_font(lab_ltitle, UI_FONT_ASCII, 0);
+    lv_obj_set_style_text_color(lab_ltitle, lv_color_hex(C_DIM), 0);
+    lv_obj_align(lab_ltitle, LV_ALIGN_LEFT_MID, 10, 0);
+
+    lv_obj_t *lab_lunit = lv_label_create(card);
+    lv_label_set_text(lab_lunit, "lx");
+    lv_obj_set_style_text_font(lab_lunit, UI_FONT_ASCII, 0);
+    lv_obj_set_style_text_color(lab_lunit, lv_color_hex(C_DIM), 0);
+    lv_obj_align(lab_lunit, LV_ALIGN_RIGHT_MID, -10, 0);
 
     label_light = lv_label_create(card);
-    lv_obj_set_style_text_font(label_light, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(label_light, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(label_light, lv_color_hex(C_LIGHT), 0);
-    lv_obj_align(label_light, LV_ALIGN_TOP_RIGHT, -10, 4);
     lv_label_set_text(label_light, "--");
-
-    bar_light = lv_bar_create(card);
-    lv_obj_set_size(bar_light, 278, 8);
-    lv_obj_align(bar_light, LV_ALIGN_BOTTOM_MID, 0, -4);
-    lv_bar_set_range(bar_light, 0, 20000);
-    lv_bar_set_value(bar_light, 0, LV_ANIM_ON);
-    lv_obj_set_style_bg_color(bar_light, lv_color_hex(C_TRACK), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar_light, lv_color_hex(C_LIGHT), LV_PART_INDICATOR);
-    lv_obj_set_style_radius(bar_light, 4, 0);
+    lv_obj_align_to(label_light, lab_lunit, LV_ALIGN_OUT_LEFT_MID, -4, 0);
 
     return scr;
 }
@@ -163,7 +167,6 @@ void page_main_update_data(float temp, float humi, float light)
     lv_label_set_text_fmt(label_light, "%.0f", light);
     lv_arc_set_value(arc_temp, (int16_t)temp);
     lv_arc_set_value(arc_humi, (int16_t)humi);
-    lv_bar_set_value(bar_light, (int32_t)light, LV_ANIM_ON);
 
     /* 数据大幅跳变时亮屏（沿用原版行为：突变即提醒） */
     extern TickType_t idle_tick;
@@ -204,6 +207,15 @@ void page_main_update_uptime(uint32_t seconds)
 {
     if (!label_uptime) return;
     uint32_t h = seconds / 3600, m = (seconds % 3600) / 60, s = seconds % 60;
-    lv_label_set_text_fmt(label_uptime, "%02u:%02u:%02u",
+    lv_label_set_text_fmt(label_uptime, "运行 %02u:%02u:%02u",
                           (unsigned)h, (unsigned)m, (unsigned)s);
+}
+
+void page_main_update_clock(uint8_t h, uint8_t m, uint8_t s, uint8_t synced)
+{
+    if (!label_clock) return;
+    lv_label_set_text_fmt(label_clock, "%02u:%02u:%02u", h, m, s);
+    /* 未校时（没联网 SNTP 成功过、也没手动设过）→ 暗色，别装成准的 */
+    lv_obj_set_style_text_color(label_clock,
+                                lv_color_hex(synced ? C_TEXT : C_DIM), 0);
 }

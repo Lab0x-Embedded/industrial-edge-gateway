@@ -87,7 +87,11 @@ void MX_RTC_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN RTC_Init 2 */
-
+  /* CubeMX 默认开了 RTC 唤醒中断（counter=0、RTCCLK/16 ≈ 每 0.5ms 一次），
+   * 全工程没有任何回调消费它 —— 纯粹烧 CPU，直接关掉。
+   * IRQ 处理函数保留，将来要用唤醒定时器时有现成入口。 */
+  HAL_RTCEx_DeactivateWakeUpTimer(&hrtc);
+  HAL_NVIC_DisableIRQ(RTC_WKUP_IRQn);
   /* USER CODE END RTC_Init 2 */
 
 }
