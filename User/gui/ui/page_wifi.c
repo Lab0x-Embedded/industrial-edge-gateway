@@ -140,7 +140,16 @@ static void modal_row_click(lv_event_t *e)
     lv_obj_t *lab = lv_obj_get_child(row, 0);       /* 子标签 0 = SSID 文本（标签自己持有副本） */
     if (lab == NULL) return;
 
-    lv_textarea_set_text(ta_ssid, lv_label_get_text(lab));
+    const char *ssid = lv_label_get_text(lab);
+    lv_textarea_set_text(ta_ssid, ssid);
+
+    /* 密码框跟着选中项走：选中的正是当前已存网络 → 刷回已存密码（重连/改密都顺手）；
+     * 选的是别的网络 → 清空。不清的话，上一个网络输过的密码会残留——点连接就把
+     * (新SSID, 旧密码) 写进 flash，之后怎么切、复位都连不上（手册 #27 同源事故）。 */
+    char cur_ssid[33], cur_pass[65];
+    wifi_conn_get(cur_ssid, sizeof cur_ssid, cur_pass, sizeof cur_pass);
+    lv_textarea_set_text(ta_pass, (strcmp(ssid, cur_ssid) == 0) ? cur_pass : "");
+
     lv_obj_add_flag(modal, LV_OBJ_FLAG_HIDDEN);     /* 选完就关，别挡着输密码 */
     focus_ta(ta_pass);
 }
@@ -249,6 +258,13 @@ static void btn_connect_click(lv_event_t *e)
 
     if (ssid[0] == 0) {                      /* 没选热点也没手输 SSID */
         set_status("NO SSID", C_FAIL);
+        return;
+    }
+    if (pass[0] == 0) {
+        /* 切换网络时密码框会被清空（防上一个网络的密码残留），这里把"忘输密码"
+         * 挡在存档之前——否则空密码会按开放网络去入网，对 WPA2 AP 必被拒，
+         * 现场只会看到一句没头没尾的 wifi denied */
+        set_status("NO PASS", C_FAIL);
         return;
     }
     if (wifi_conn_save(ssid, pass) != 0) {

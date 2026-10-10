@@ -224,6 +224,19 @@ static int mqtt_wait_connack(void) {
 }
 
 /* ESP8266 uart1 波特率115200 DMA空闲中断*/
+/* 关掉模块"上电自动连存储 AP"（CWAUTOCONN 默认 1，CWJAP 成功过一次就会写进
+ * 模块 flash）。必须重试到 OK 为止：发令时模块常正忙于自己的自动重连
+ * （busy p... 把指令丢掉），单发一次被丢后，之后每次 AT+RST 都会重新触发
+ * 自动连 —— 我们发的 CWJAP（无论新网络还是切回旧网络）全部撞死在 busy 窗口里，
+ * 现场表现就是"点连接永远 wifi timeout，复位才好"（手册 #27）。 */
+static void esp_disable_autoconn(void) {
+  for (int i = 0; i < 10; i++) {
+    if (ESP_SendCmd_OK("AT+CWAUTOCONN=0\r\n", 2000) == ESP_OK) return;
+    vTaskDelay(pdMS_TO_TICKS(300));
+  }
+  Log_Write(LOG_WARN, "cwautoconn=0 FAIL");
+}
+
 //+++正确退出透传后 下一条语句就不会输出error
 void MQTT_Init(void) {
   const CloudProfile *p = &profiles[CLOUD_TARGET];
@@ -239,12 +252,15 @@ void MQTT_Init(void) {
   }
 
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
-  /* 关掉模块的"开机自动连上次热点"：它和我们马上要发的 CWJAP 是并发的，
-   * 撞上就是 "busy p..." → CWJAP 15s 超时 → wifi_connected=0；而模块自己
-   * 却连上了，CIPSTART 照样成功 —— 结果是云在线、校时都做了，UI 却显示
-   * WiFi OFF（旗子和事实脱节）。入网只认我们发的 CWJAP 这一条路。 */
-  ESP_SendCmd_OK("AT+CWAUTOCONN=0\r\n", 2000);
-  wifi_join();                      /* 失败原因由 wifi_join 自己写日志页 */
+  /* 必须重试到 OK（见 esp_disable_autoconn 注释）：以前这里单发一次且不看
+   * 返回值，恰逢模块自动重连的 busy 窗口时被静默丢弃，等于从没关掉过。 */
+  esp_disable_autoconn();
+  if (!wifi_join()) {               /* 失败原因由 wifi_join 自己写日志页 */
+    /* 入网没成就别往下走：TCP/透传必然全失败，还把模块留在
+     * CIPMODE=1 却无连接的中间态；等下一轮重连再来 */
+    g_mqtt_connected = 0;
+    return;
+  }
   vTaskDelay(500);
 
   /* 透传前置（Espressif 透传流程的既定顺序）：CIPMUX=0 是 CIPMODE=1 的前提；
@@ -310,8 +326,15 @@ void RE_MQTT_Init(void) {
     return;
   }
 
+  /* RST 会唤醒模块"上电自动连存储 AP"（CWJAP 成功过的那个，= 用户切走前的
+   * 旧网络）：不先关掉，它和下面的 CWJAP 撞死在同一 busy 窗口里 —— 开机路径
+   * 没有 RST 所以没事，运行时切网/切回永远 "wifi timeout" 的根源（手册 #27）。 */
+  esp_disable_autoconn();
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
-  wifi_join();                      /* 失败原因由 wifi_join 自己写日志页 */
+  if (!wifi_join()) {               /* 失败原因由 wifi_join 自己写日志页 */
+    g_mqtt_connected = 0;
+    return;                         /* 入网没成，TCP/透传必然全失败，别浪费时间 */
+  }
 
   /* 同 MQTT_Init：CIPMUX/CIPMODE 必须在 CIPSTART 之前设好（AT+RST 后 CIPMODE 清零） */
   ESP_SendCmd_OK("AT+CIPMUX=0\r\n", 2000);
