@@ -4,7 +4,6 @@
 #include "stm32f4xx_hal.h"
 #include "main.h"
 #include <stdio.h>
-//#include "spi.h"
 
 #define sFLASH_ID                       0XEF4017     // W25Q64
 #define SPI_FLASH_PageSize              256
@@ -31,12 +30,10 @@
 #define WIP_Flag                0x01
 #define Dummy_Byte              0xFF
 
-/* ====================== 修正：对接 CubeMX SPI2 ====================== */
-#define SPIx                             SPI2
-
-// 🔥 核心修复：直接用 CubeMX 生成的 hspi1
-//extern SPI_HandleTypeDef hspi1;
-#define SpiHandle                         hspi1
+/* SPI 总线：W25Q 挂在 CubeMX 配置的 SPI1 上（PB3/PB4/PB5，为避开触摸的
+ * PA5 被挪到了 B 口），句柄直接复用 CubeMX 生成的 hspi1。
+#define SPIx                            SPI1 
+#define SpiHandle                       hspi1
 
 /* 引脚定义 —— 统一复用 main.h 的 CubeMX 配置（PG8） */
 #define FLASH_CS_PIN                     W25Q_CS_Pin

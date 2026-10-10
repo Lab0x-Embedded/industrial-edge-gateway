@@ -28,10 +28,9 @@
 #include "gpio.h"
 #include "fsmc.h"
 
-#include <stdio.h>
-#include <stdlib.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
 #include "lcd.h"
 #include "touch.h"
 #include "modbus.h"

@@ -13,6 +13,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "stm32f4xx.h"
+#include "main.h"
 #include <stdio.h>
 
 static lv_obj_t *label_temp, *label_humi, *label_light;
@@ -180,7 +181,7 @@ void page_main_update_data(float temp, float humi, float light)
         (light - last_light > 10 || last_light - light > 10))
     {
         idle_tick = xTaskGetTickCount();
-        HAL_GPIO_WritePin(GPIOF, GPIO_PIN_10, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(LCD_BL_GPIO_Port, LCD_BL_Pin, GPIO_PIN_SET);
         lcd_bl_en = 1;
     }
 
