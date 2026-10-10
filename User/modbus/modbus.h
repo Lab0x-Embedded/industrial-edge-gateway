@@ -22,6 +22,7 @@ typedef struct
     uint16_t err_cnt;     // 连续失败次数
     float    val1;        // 数据1
     float    val2;        // 数据2
+    float    val3;        // 数据3（可扩展）
     uint8_t  valid;       // 自上电以来至少成功读到过一次
 } ModDev_t;
 
