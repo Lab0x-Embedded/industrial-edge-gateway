@@ -103,8 +103,14 @@ void LCD_Init(void)
     LCD_WR_DATA(0x45); LCD_WR_DATA(0x15);
     LCD_WR_REG(0xC7); LCD_WR_DATA(0x90);
 
-    /* 横屏 320x240（沿用原工程方向寄存器值） */
-    LCD_WR_REG(0x36); LCD_WR_DATA(0x60);   /* MX=1,MV=1 横屏；BGR=0（面板为 RGB 序，置 1 会红蓝互换） */
+    /* 横屏 320x240 + 像素序：
+     * 0x60 = MX|MV（横屏，无镜像），BGR 位=0，红蓝**互换**；
+     * 0x68 = 0x60|BGR，红蓝正常。
+     * 这块屏实测要 0x68：BGR 位=0 时蓝显示成橙（连接按钮/设置页图标都是蓝的，
+     * 上板看着是橙色）。注意别被历史注释带偏 —— 早先"蓝变橙"被当成 BGR 位
+     * 多设了、改成 0x60，但那时屏幕上还叠着一个整屏反显（0x21），判断被污染了。
+     * 验收色：连接按钮=蓝、温度弧=红、湿度弧=青绿、光照数字=琥珀橙。 */
+    LCD_WR_REG(0x36); LCD_WR_DATA(0x68);   /* MX=1,MV=1 横屏；BGR=1 */
 
     /* 像素格式 RGB565 */
     LCD_WR_REG(0x3A); LCD_WR_DATA(0x55);
@@ -131,7 +137,11 @@ void LCD_Init(void)
     LCD_WR_DATA(0x3C); LCD_WR_DATA(0x05); LCD_WR_DATA(0x10); LCD_WR_DATA(0x0F);
     LCD_WR_DATA(0x3F); LCD_WR_DATA(0x3F); LCD_WR_DATA(0x0F);
 
-    LCD_WR_REG(0x21);   /* 反显（原工程使用，白底界面） */
+    /* 显示反显（display inversion）：0x21=反显 INVON，0x20=正显 INVOFF。
+     * 原工程（白底界面）带过来的是 0x21，但本屏实测需要正显：
+     * 置 0x21 时整屏颜色取反 —— 深色底 #0F172A 显示成奶白 #F0E8D5、
+     * 深色卡片 #1E293B 显示成浅灰 #E1D6C4，表现为"白底 + 灰卡片"。 */
+    LCD_WR_REG(0x20);   /* 正显（关反显） */
     LCD_WR_REG(0x11);   /* 退出睡眠 */
     HAL_Delay(120);
     LCD_WR_REG(0x29);   /* 开显示 */

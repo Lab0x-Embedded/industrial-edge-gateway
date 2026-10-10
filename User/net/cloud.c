@@ -1,4 +1,6 @@
 #include "cloud.h"
+#include "wifi_conn.h"
+#include "w25qxx.h"
 #include "esp_uart.h"
 #include "esp_at.h"
 #include "log.h"
@@ -16,7 +18,7 @@ volatile uint8_t wifi_connected =
     0; /* ESP8266 已连上 AP（CWJAP 成功），UI 状态栏据此显示 */
 
 /* ============================================================
- *  云平台 profile —— 三个平台都是"明文 TCP + 标准 MQTT"，
+ *  云平台 profile —— 两个平台都是"明文 TCP + 标准 MQTT"，
  *  差异全部收敛在这张表里；新增平台 = 加一行表项 + payload 分支。
  *  （OneNET token 在 pal.h 配置，et 过期后需重新生成并替换）
  * ============================================================ */
@@ -204,12 +206,24 @@ static int mqtt_send_subscribe(void) {
 }
 
 /* 等待并校验 CONNACK：0x20 0x02 xx 0x00（返回码 0 = 接受连接）。
- * 只有这一步通过才允许置在线。 */
+ * 只有这一步通过才允许置在线。失败时把实际收到的字节打到调试口：
+ * 第 4 字节是返回码（4=用户名/密码被拒、5=未授权），
+ * 一个字节都没有则说明 CONNECT 没到平台（模块没在真透传/链路已断）。 */
 static int mqtt_wait_connack(void) {
   uint8_t connack[4];
   int ret = esp_recv_raw(0, connack, 4, 3000);
-  return (ret == 4 && connack[0] == 0x20 && connack[1] == 0x02 &&
-          connack[3] == 0x00);
+  if (ret == 4 && connack[0] == 0x20 && connack[1] == 0x02 &&
+      connack[3] == 0x00)
+    return 1;
+  if (ret > 0) {
+    dbg_print("[MQTT] connack(%d):", ret);
+    for (int i = 0; i < ret && i < 4; i++)
+      dbg_print(" %02X", connack[i]);
+    dbg_print("\r\n");
+  } else {
+    dbg_print("[MQTT] connack: no reply\r\n");
+  }
+  return 0;
 }
 
 /* ESP8266 uart1 波特率115200 DMA空闲中断*/
@@ -218,32 +232,44 @@ void MQTT_Init(void) {
   const CloudProfile *p = &profiles[CLOUD_TARGET];
   char cmd[96];
 
-  HAL_UART_Transmit(&huart4, (uint8_t *)"+++\r\n", 3, 100);
-  vTaskDelay(1000);
-
-  // 任意合法AT指令，完成模式切换（不操作TCP，安全无断连）
-  ESP_SendCmd_OK("AT\r\n", 2000);
-  vTaskDelay(200);
+  /* 退透传：带静默期 + 确认 + 重试（wifi_at_escape 内部实现）。
+   * 退不出来就**别往下发**——后面每条 AT 指令都会被当成 TCP 数据灌进连接，
+   * 模块再也收不到指令，表现就是"怎么都连不上"。 */
+  if (wifi_at_escape() != 0) {
+    Log_Write(LOG_WARN, "init: no AT mode");
+    g_mqtt_connected = 0;
+    return;
+  }
 
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
-  if (ESP_SendCmd("AT+CWJAP=\"" WIFI_SSID "\",\"" WIFI_PASS "\"\r\n",
-                  "WIFI GOT IP", 5000) == ESP_OK) {
-    wifi_connected = 1;
-  } else {
-    wifi_connected = 0;
-    Log_Write(LOG_WARN, "wifi join failed");
-  }
+  /* 关掉模块的"开机自动连上次热点"：它和我们马上要发的 CWJAP 是并发的，
+   * 撞上就是 "busy p..." → CWJAP 15s 超时 → wifi_connected=0；而模块自己
+   * 却连上了，CIPSTART 照样成功 —— 结果是云在线、校时都做了，UI 却显示
+   * WiFi OFF（旗子和事实脱节）。入网只认我们发的 CWJAP 这一条路。 */
+  ESP_SendCmd_OK("AT+CWAUTOCONN=0\r\n", 2000);
+  wifi_join();                      /* 失败原因由 wifi_join 自己写日志页 */
   vTaskDelay(500);
+
+  /* 透传前置（Espressif 透传流程的既定顺序）：CIPMUX=0 是 CIPMODE=1 的前提；
+   * CIPMODE 必须在 CIPSTART 之前设 —— 部分固件对"TCP 已建立后再设 CIPMODE"
+   * 回 ERROR，那正是日志里"没有 tcp fail、只有 passthrough fail"的一种成因。
+   * CIPMODE 不进 flash，AT+RST 后清零，所以 RE_MQTT_Init 也要各设一遍。 */
+  ESP_SendCmd_OK("AT+CIPMUX=0\r\n", 2000);
+  ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000);
 
   snprintf(cmd, sizeof cmd, "AT+CIPSTART=\"TCP\",\"%s\",%u\r\n", p->host,
            (unsigned)p->port);
-  ESP_SendCmd(cmd, "CONNECT", 2000);
+  /* 5s（原 2s 太短）：域名解析 + TCP 握手正常就要 1~3s，超时后照样往下走，
+   * 最后只能看到一句笼统的 connack failed，分不清是 TCP 没起来还是 MQTT 被拒。 */
+  if (ESP_SendCmd(cmd, "CONNECT", 5000) != ESP_OK)
+    Log_Write(LOG_WARN, "init: tcp fail");
   vTaskDelay(500);
 
-  // 进入透传模式
-  ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000);
-  // 启动透传
-  ESP_SendCmd("AT+CIPSEND\r\n", ">", 5000);
+  if (wifi_at_passthrough_enter() != 0) {   /* CIPMODE=1 + CIPSEND，确认拿到 ">" */
+    Log_Write(LOG_WARN, "init: passthrough fail");
+    g_mqtt_connected = 0;
+    return;
+  }
   vTaskDelay(500);
   RingBuf_Clear();
 
@@ -252,6 +278,11 @@ void MQTT_Init(void) {
     mqtt_send_subscribe();
     g_mqtt_connected = 1;
     Log_Write(LOG_INFO, "CONNECT FINISH");
+    /* 连上就当场校一次时：原来挂在 10s 心跳循环里且"校过就不再跑"——等得久，
+     * 且 RTC 走 LSI 会慢慢漂。这里顺手对表的代价只有几秒，失败不影响在线
+     * 状态，心跳循环里还留着"未校时兜底重试"。 */
+    if (wifi_time_sync_locked() != 0)
+      Log_Write(LOG_WARN, "sntp fail (clock stays dim)");
   } else {
     g_mqtt_connected = 0;
     Log_Write(LOG_WARN, "connack failed");
@@ -264,29 +295,41 @@ void RE_MQTT_Init(void) {
   const CloudProfile *p = &profiles[CLOUD_TARGET];
   char cmd[96];
 
-  HAL_UART_Transmit(&huart4, (uint8_t *)"+++\r\n", 3, 100);
-  vTaskDelay(1000);
+  /* 先确认在 AT 指令模式：这里原本是裸发 "+++"（1s 保护时间，不确认是否退成功），
+   * 一旦退出失败，后面的 AT+RST 也会被当成透传数据 —— 重连彻底卡死，
+   * 每 10s 重复一次同样的失败，现场看就是"怎么都连不上"。 */
+  if (wifi_at_escape() != 0) {
+    Log_Write(LOG_WARN, "reconnect: no AT mode");
+    g_mqtt_connected = 0;
+    return;
+  }
 
-  ESP_SendCmd_OK("AT+RST\r\n", 2000); /* 复位，退出异常透传/半连接状态 */
-  vTaskDelay(pdMS_TO_TICKS(1000));
-  ESP_SendCmd_OK("AT+RST\r\n", 2000);
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  ESP_SendCmd_OK("AT+RST\r\n", 2000);      /* 复位：退出异常透传/半连接状态 */
+  /* 复位后必须等模块真的起来（AT 固件 1~3s）。原来这里盲等 1s 就发 CWMODE/CWJAP，
+   * 指令落在启动窗口里被丢掉 → CWJAP 入不了网 → "点连接永远失败"。 */
+  if (wifi_at_wait_ready(8000) != 0) {
+    Log_Write(LOG_WARN, "reconnect: no AT after reset");
+    g_mqtt_connected = 0;
+    return;
+  }
 
   ESP_SendCmd_OK("AT+CWMODE=1\r\n", 2000);
-  if (ESP_SendCmd("AT+CWJAP=\"" WIFI_SSID "\",\"" WIFI_PASS "\"\r\n",
-                  "WIFI GOT IP", 5000) == ESP_OK) {
-    wifi_connected = 1;
-  } else {
-    wifi_connected = 0;
-    Log_Write(LOG_WARN, "reconnect: wifi failed");
-  }
+  wifi_join();                      /* 失败原因由 wifi_join 自己写日志页 */
+
+  /* 同 MQTT_Init：CIPMUX/CIPMODE 必须在 CIPSTART 之前设好（AT+RST 后 CIPMODE 清零） */
+  ESP_SendCmd_OK("AT+CIPMUX=0\r\n", 2000);
+  ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000);
+
   snprintf(cmd, sizeof cmd, "AT+CIPSTART=\"TCP\",\"%s\",%u\r\n", p->host,
            (unsigned)p->port);
   if (ESP_SendCmd(cmd, "CONNECT", 5000) != ESP_OK) {
     Log_Write(LOG_WARN, "reconnect: tcp failed");
   }
-  ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000);
-  ESP_SendCmd("AT+CIPSEND\r\n", ">", 5000);
+  if (wifi_at_passthrough_enter() != 0) {
+    Log_Write(LOG_WARN, "reconnect: passthrough fail");
+    g_mqtt_connected = 0;
+    return;
+  }
   vTaskDelay(500);
   RingBuf_Clear();
 
@@ -295,6 +338,9 @@ void RE_MQTT_Init(void) {
     mqtt_send_subscribe();
     g_mqtt_connected = 1;
     Log_Write(LOG_INFO, "reconnect success");
+    /* 同 MQTT_Init：连上即校时，别等心跳循环 */
+    if (wifi_time_sync_locked() != 0)
+      Log_Write(LOG_WARN, "sntp fail (clock stays dim)");
   } else {
     g_mqtt_connected = 0;
     Log_Write(LOG_WARN, "reconnect: connack failed");

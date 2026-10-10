@@ -1,395 +1,240 @@
-#include "lvgl.h"
-#include "log.h"
-#include "tasks.h" 
-#include "stdio.h"
-#include "stm32f4xx.h"
-#include "w25qxx.h"
-#include "main.h"
-
-// 字体声明
-extern lv_font_t font_chinese_9;
-
-
-lv_obj_t *bar_light;
-lv_obj_t *label_light;
-
-lv_obj_t *page_main_create(void);
-void page_log_refresh(void);
-/* 全局控件 */
-static lv_obj_t *label_temp;
-static lv_obj_t *label_humi;
-static lv_obj_t *label_status;
-static lv_obj_t *label_uptime;
-static lv_obj_t *bar_temp;
-static lv_obj_t *bar_humi;
-static lv_obj_t *btn_test;  // 按钮句柄
-
-//=====新增日志页面全局控件=====
-static lv_obj_t *scr_log = NULL;    //日志屏幕
-static lv_obj_t *list_log = NULL;   //日志列表
-static lv_obj_t *btn_back;         //日志页返回按钮
-//static lv_obj_t *scr_main = NULL;    //日志屏幕
-
-extern lv_obj_t *main_scr;
-static void btn_back_click(lv_event_t *e);
-void page_main_update_status(uint8_t wifi, uint8_t mqtt);
-extern  uint32_t log_write_offset ;
-extern volatile uint8_t wifi_connected;    // ESP8266 已连上 AP（pal.c 维护）
-
-lv_obj_t *page_log_create(void)
-{
-    lv_obj_t *scr = lv_obj_create(NULL);				//NULL 创建独立屏幕
-    lv_obj_set_style_bg_color(scr,lv_color_hex(0xF8F9FA),0);
-    lv_obj_clear_flag(scr,LV_OBJ_FLAG_SCROLLABLE);			//禁用 scr 这个 LVGL 屏幕对象的滚动功能
-
-    //顶部返回按钮
-    btn_back = lv_btn_create(scr);
-    lv_obj_set_size(btn_back,65,35);
-    lv_obj_align(btn_back,LV_ALIGN_TOP_LEFT,5,5);
-    lv_obj_set_style_bg_color(btn_back,lv_color_hex(0x0F3460),0);
-	
-    lv_obj_t *lab_back = lv_label_create(btn_back);
-    lv_label_set_text(lab_back,"返回");
-		lv_obj_align(lab_back, LV_ALIGN_CENTER, 0, 0); 
-    lv_obj_set_style_text_font(lab_back,&font_chinese_9,0);
-    lv_obj_add_event_cb(btn_back,btn_back_click,LV_EVENT_CLICKED,NULL);	//事件回调
-
-    //页面标题
-    lv_obj_t *title_log = lv_label_create(scr);
-    lv_label_set_text(title_log,"系统运行日志");
-    lv_obj_align(title_log,LV_ALIGN_TOP_MID,0,8);
-    lv_obj_set_style_text_font(title_log,&font_chinese_9,0);
-
-    //日志列表（可滚动）
-    list_log = lv_list_create(scr);
-    lv_obj_set_size(list_log,lv_obj_get_width(scr)-10,lv_obj_get_height(scr)-60);
-    lv_obj_align(list_log,LV_ALIGN_BOTTOM_MID,0,-5);
-    lv_obj_set_style_radius(list_log,6,0);
-
-    return scr;
-}
-
-//日志按钮事件回调
-static void btn_click_jump_log(lv_event_t *e)
-{
-    if(scr_log == NULL)
-        scr_log = page_log_create();
-    lv_scr_load(scr_log);			//加载日志页面
-    page_log_refresh(); //仅切页面刷新1次日志
-}
-
-//日志页【返回】按钮回调
-static void btn_back_click(lv_event_t *e)
-{
-
-	lv_scr_load(main_scr);
-	 page_main_update_status(wifi_connected, g_mqtt_connected);				//返回主页面后更新连接状态
-}
-
-
-/**
- * @brief  创建主监控页面
- * @retval 返回页面根对象
+/* 主监控页 · 深色工业风
+ * 版面（320x240）：
+ *   y   0-26  顶栏：中文标题「边缘网关监控」+ 右上 WiFi/云 状态
+ *   y  30-160 双仪表盘：温度 / 湿度（130px 弧盘）
+ *   y 164-194 实时时间条：HH:MM:SS（24px）+ 运行时长 + 设置入口
+ *   y 198-234 光照读数卡片：只有数值，没有进度条（用户明确要求去掉橙色条）
+ * 色板与控件样式统一走 ui_theme.h，本页不再自己写色值。
  */
+#include "lvgl.h"
+#include "ui_theme.h"
+#include "page_settings.h"
+#include "tasks.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "stm32f4xx.h"
+#include <stdio.h>
+
+static lv_obj_t *label_temp, *label_humi, *label_light;
+static lv_obj_t *arc_temp, *arc_humi;
+static lv_obj_t *label_status, *label_uptime, *label_clock, *label_date;
+
+/* 所有数值控件收为本页静态，不导出全局句柄 */
+
+/* 造一个仪表盘：lv_arc 去掉旋钮 + 圆头弧线，135°~45° 扫 270° 的经典表盘形态；
+ * 中心放大号数值，弧线下沿放名称标签 */
+static lv_obj_t *make_gauge(lv_obj_t *parent, int32_t min, int32_t max,
+                            uint32_t color, const char *name)
+{
+    lv_obj_t *arc = lv_arc_create(parent);
+    lv_obj_remove_style_all(arc);               /* 先清默认主题（含旋钮那套），再自绘 */
+    lv_obj_set_size(arc, 130, 130);             /* 顺序不能反：remove_style_all 会连尺寸一起删 */
+    lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_arc_set_range(arc, min, max);
+    lv_arc_set_bg_angles(arc, 135, 45);
+    lv_arc_set_value(arc, min);
+    lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_arc_width(arc, 12, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(arc, lv_color_hex(C_TRACK), LV_PART_MAIN);
+    lv_obj_set_style_arc_width(arc, 12, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(arc, lv_color_hex(color), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(arc, true, LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(arc, true, LV_PART_INDICATOR);
+
+    lv_obj_t *lab_name = lv_label_create(arc);
+    lv_label_set_text(lab_name, name);
+    lv_obj_set_style_text_font(lab_name, UI_FONT_ASCII, 0);
+    lv_obj_set_style_text_color(lab_name, lv_color_hex(C_DIM), 0);
+    lv_obj_align(lab_name, LV_ALIGN_CENTER, 0, 22);
+    return arc;
+}
+
+static void btn_set_click(lv_event_t *e)
+{
+    (void)e;
+    page_settings_open();
+}
+
 lv_obj_t *page_main_create(void)
 {
-    // 创建独立屏幕对象，NULL 表示不依附默认屏幕
-    lv_obj_t *scr = lv_obj_create(NULL);			
+    lv_obj_t *scr = lv_obj_create(NULL);
+    ui_style_screen(scr);
 
-    // 设置屏幕背景色：浅灰蓝
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0xE8EEF5), 0);
-    // 禁用屏幕整体滑动功能
-    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);							
-    // 关闭滚动条显示
-    lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);				 
+    /* ---- 顶栏：中文标题居中 | 状态靠右 ----
+     * 顺序坑：必须先 remove_style_all() 再 set_size()。
+     * 尺寸（WIDTH/HEIGHT）也是局部样式，先 set 后 remove 会把尺寸删掉，
+     * 对象就退回 lv_obj_class 的默认 130x130（LV_DPI_DEF）——
+     * 症状就是"顶栏变成屏幕中间一个方块、标题怎么调都不在它该在的地方"。 */
+    lv_obj_t *top = lv_obj_create(scr);
+    lv_obj_remove_style_all(top);
+    lv_obj_set_size(top, 320, 28);
+    lv_obj_align(top, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(top, lv_color_hex(C_CARD), 0);
+    lv_obj_set_style_bg_opa(top, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ===================== 顶部主标题 =====================
-    lv_obj_t *title = lv_label_create(scr);                 // 创建文本标签
-    lv_label_set_text(title, "边缘网关监控");               // 设置标题文字
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 4);            // 顶部居中，Y偏移4
-    lv_obj_set_style_text_color(title, lv_color_hex(0x2D3748), 0); // 文字深灰
-    lv_obj_set_style_text_font(title, &font_chinese_9, 0);   // 设置中文字体
+    lv_obj_t *title = lv_label_create(top);
+    lv_label_set_text(title, "边缘网关监控");
+    lv_obj_set_style_text_font(title, UI_FONT_CJK, 0);   /* 中文标题用小字号（14px 抗锯齿） */
+    lv_obj_set_style_text_color(title, lv_color_hex(C_TEXT), 0);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);          /* 顶栏正中 */
 
-    // 定义三张卡片宽度、高度，320屏无缝均分
-    const int card_w1 = 106;
-    const int card_w2 = 106;
-    const int card_w3 = 108;
-    const int card_h = 90;
+    label_date = lv_label_create(top);
+    lv_label_set_text(label_date, "--");
+    lv_obj_set_style_text_font(label_date, UI_FONT_ASCII, 0);
+    lv_obj_set_style_text_color(label_date, lv_color_hex(C_DIM), 0);
+    lv_obj_align(label_date, LV_ALIGN_LEFT_MID, 8, 0);   /* 左上角：校时后显示 2026-10-09 */
 
-    // 计算卡片组水平居中偏移量
-    int group_x = (320 - (card_w1 + card_w2 + card_w3)) / 2;
-    // 卡片Y坐标：底部状态栏(32高)上方，预留间距
-    int base_y = 240 - 32 - card_h - 42;
+    label_status = lv_label_create(top);
+    lv_label_set_text(label_status, LV_SYMBOL_WIFI " OFF");
+    lv_obj_set_style_text_font(label_status, UI_FONT_ASCII, 0);  /* 含图标，必须用 montserrat */
+    lv_obj_set_style_text_color(label_status, lv_color_hex(C_FAIL), 0);
+    lv_obj_align(label_status, LV_ALIGN_RIGHT_MID, -8, 0);
 
-    // ===================== 左侧 温度卡片 =====================
-    lv_obj_t *card_temp = lv_obj_create(scr);               // 创建卡片容器
-    lv_obj_set_size(card_temp, card_w1, card_h);            // 设置卡片尺寸
-    lv_obj_align(card_temp, LV_ALIGN_TOP_LEFT, group_x, base_y); // 定位卡片
-    lv_obj_clear_flag(card_temp, LV_OBJ_FLAG_SCROLLABLE);   // 禁止卡片内部滑动
-    lv_obj_set_style_bg_color(card_temp, lv_color_hex(0xFFFFFF), 0); // 卡片白底
-    lv_obj_set_style_border_width(card_temp, 1, 0);         // 边框宽度1px
-    lv_obj_set_style_border_color(card_temp, lv_color_hex(0xC9D8E8), 0); // 边框浅灰
-    lv_obj_set_style_radius(card_temp, 0, 0);               // 直角卡片
+    /* ---- 双仪表：温度 / 湿度 ----
+     * 量程对应传感器实际范围（温 -10~60℃，湿 0~100%） */
+    arc_temp = make_gauge(scr, -10, 60, C_TEMP, "TEMP C");
+    lv_obj_align(arc_temp, LV_ALIGN_TOP_LEFT, 14, 30);
+    label_temp = lv_label_create(arc_temp);
+    lv_obj_set_style_text_font(label_temp, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(label_temp, lv_color_hex(C_TEMP), 0);
+    lv_obj_align(label_temp, LV_ALIGN_CENTER, 0, -8);
+    lv_label_set_text(label_temp, "--");
 
-    // 卡片顶部标签：温度
-    lv_obj_t *icon_temp = lv_label_create(card_temp);
-    lv_label_set_text(icon_temp, "温度");
-    lv_obj_align(icon_temp, LV_ALIGN_TOP_MID, 0, 4);         // 靠近卡片顶部
-    lv_obj_set_style_text_color(icon_temp, lv_color_hex(0xE53E3E), 0); // 红色文字
-    lv_obj_set_style_text_font(icon_temp, &font_chinese_9, 0);
+    arc_humi = make_gauge(scr, 0, 100, C_HUMI, "HUMI %");
+    lv_obj_align(arc_humi, LV_ALIGN_TOP_RIGHT, -14, 30);
+    label_humi = lv_label_create(arc_humi);
+    lv_obj_set_style_text_font(label_humi, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(label_humi, lv_color_hex(C_HUMI), 0);
+    lv_obj_align(label_humi, LV_ALIGN_CENTER, 0, -8);
+    lv_label_set_text(label_humi, "--");
 
-    // 温度数值显示标签
-    label_temp = lv_label_create(card_temp);
-    lv_label_set_text(label_temp, "--.-C");
-    lv_obj_align(label_temp, LV_ALIGN_TOP_MID, 0, 32);
-    lv_obj_set_style_text_color(label_temp, lv_color_hex(0xE53E3E), 0);
-    lv_obj_set_style_text_font(label_temp, &font_chinese_9, 0);
+    /* ---- 实时时间条：HH:MM:SS | 运行时长 | 设置 ---- */
+    lv_obj_t *card_t = lv_obj_create(scr);
+    lv_obj_set_size(card_t, 300, 30);
+    lv_obj_align(card_t, LV_ALIGN_TOP_MID, 0, 164);
+    ui_style_card(card_t, false);
 
-    // 温度进度条
-    bar_temp = lv_bar_create(card_temp);
-    lv_obj_set_size(bar_temp, 85, 8);                       // 进度条尺寸
-    lv_obj_align(bar_temp, LV_ALIGN_BOTTOM_MID, 0, 0);      // 紧贴卡片底部
-    lv_bar_set_range(bar_temp, -10, 60);                    // 进度条量程
-    lv_bar_set_value(bar_temp, 0, LV_ANIM_ON);              // 初始值0，开启动画
-    lv_obj_set_style_bg_color(bar_temp, lv_color_hex(0xE2E8F0), LV_PART_MAIN); // 轨道底色
-    lv_obj_set_style_bg_color(bar_temp, lv_color_hex(0xE53E3E), LV_PART_INDICATOR); // 进度色
-    lv_obj_set_style_radius(bar_temp, 2, 0);                // 进度条圆角
+    label_clock = lv_label_create(card_t);
+    lv_label_set_text(label_clock, "--:--:--");
+    lv_obj_set_style_text_font(label_clock, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(label_clock, lv_color_hex(C_DIM), 0);  /* 未校时=暗色 */
+    lv_obj_align(label_clock, LV_ALIGN_LEFT_MID, 10, 0);
 
-    // ===================== 中间 光照卡片 =====================
-    lv_obj_t *card_light = lv_obj_create(scr);
-    lv_obj_set_size(card_light, card_w2, card_h);
-    lv_obj_align(card_light, LV_ALIGN_TOP_LEFT, group_x + card_w1, base_y);
-    lv_obj_clear_flag(card_light, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(card_light, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_border_width(card_light, 1, 0);
-    lv_obj_set_style_border_color(card_light, lv_color_hex(0xC9D8E8), 0);
-    lv_obj_set_style_radius(card_light, 0, 0);
+    lv_obj_t *btn_set = lv_btn_create(card_t);
+    lv_obj_set_size(btn_set, 34, 22);
+    lv_obj_align(btn_set, LV_ALIGN_RIGHT_MID, -6, 0);
+    ui_style_btn(btn_set, C_TRACK, C_TEXT);
+    lv_obj_t *lab_set = lv_label_create(btn_set);
+    lv_label_set_text(lab_set, LV_SYMBOL_SETTINGS);
+    lv_obj_set_style_text_font(lab_set, UI_FONT_ASCII, 0);
+    lv_obj_center(lab_set);
+    lv_obj_add_event_cb(btn_set, btn_set_click, LV_EVENT_CLICKED, NULL);
 
-    // 卡片顶部标签：光照
-    lv_obj_t *icon_light = lv_label_create(card_light);
-    lv_label_set_text(icon_light, "光照");
-    lv_obj_align(icon_light, LV_ALIGN_TOP_MID, 0, 4);
-    lv_obj_set_style_text_color(icon_light, lv_color_hex(0xD69E00), 0); // 黄色文字
-    lv_obj_set_style_text_font(icon_light, &font_chinese_9, 0);
+    label_uptime = lv_label_create(card_t);
+    lv_label_set_text(label_uptime, "运行 --:--:--");
+    lv_obj_set_style_text_font(label_uptime, UI_FONT_CJK, 0);
+    lv_obj_set_style_text_color(label_uptime, lv_color_hex(C_DIM), 0);
+    lv_obj_align_to(label_uptime, btn_set, LV_ALIGN_OUT_LEFT_MID, -16, 0);
 
-    // 光照数值显示标签
-    label_light = lv_label_create(card_light);
-    lv_label_set_text(label_light, "----");
-    lv_obj_align(label_light, LV_ALIGN_TOP_MID, 0, 32);
-    lv_obj_set_style_text_color(label_light, lv_color_hex(0xD69E00), 0);
-    lv_obj_set_style_text_font(label_light, &font_chinese_9, 0);
+    /* ---- 光照读数卡片（无进度条）---- */
+    lv_obj_t *card = lv_obj_create(scr);
+    lv_obj_set_size(card, 300, 36);
+    lv_obj_align(card, LV_ALIGN_BOTTOM_MID, 0, -6);
+    ui_style_card(card, true);
 
-    // 光照进度条
-    bar_light = lv_bar_create(card_light);
-    lv_obj_set_size(bar_light, 85, 8);
-    lv_obj_align(bar_light, LV_ALIGN_BOTTOM_MID, 0, 0);      // 紧贴卡片底部
-    lv_bar_set_range(bar_light, 0, 20000);                  // 光照量程 0~20000
-    lv_bar_set_value(bar_light, 0, LV_ANIM_ON);
-    lv_obj_set_style_bg_color(bar_light, lv_color_hex(0xE2E8F0), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar_light, lv_color_hex(0xD69E00), LV_PART_INDICATOR);
-    lv_obj_set_style_radius(bar_light, 2, 0);
+    lv_obj_t *lab_ltitle = lv_label_create(card);
+    lv_label_set_text(lab_ltitle, LV_SYMBOL_EYE_OPEN " LIGHT (lx)");   /* 单位写进标题，数字右边不再挂零碎标签 */
+    lv_obj_set_style_text_font(lab_ltitle, UI_FONT_ASCII, 0);
+    lv_obj_set_style_text_color(lab_ltitle, lv_color_hex(C_DIM), 0);
+    lv_obj_align(lab_ltitle, LV_ALIGN_LEFT_MID, 10, 0);
 
-    // ===================== 右侧 湿度卡片 =====================
-    lv_obj_t *card_humi = lv_obj_create(scr);
-    lv_obj_set_size(card_humi, card_w3, card_h);
-    lv_obj_align(card_humi, LV_ALIGN_TOP_LEFT, group_x + card_w1 + card_w2, base_y);
-    lv_obj_clear_flag(card_humi, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(card_humi, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_border_width(card_humi, 1, 0);
-    lv_obj_set_style_border_color(card_humi, lv_color_hex(0xC9D8E8), 0);
-    lv_obj_set_style_radius(card_humi, 0, 0);
+    label_light = lv_label_create(card);
+    lv_obj_set_style_text_font(label_light, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(label_light, lv_color_hex(C_LIGHT), 0);
+    lv_label_set_text(label_light, "--");
+    lv_obj_align(label_light, LV_ALIGN_RIGHT_MID, -10, 0);
 
-    // 卡片顶部标签：湿度
-    lv_obj_t *icon_humi = lv_label_create(card_humi);
-    lv_label_set_text(icon_humi, "湿度");
-    lv_obj_align(icon_humi, LV_ALIGN_TOP_MID, 0, 4);
-    lv_obj_set_style_text_color(icon_humi, lv_color_hex(0x319795), 0); // 青绿色文字
-    lv_obj_set_style_text_font(icon_humi, &font_chinese_9, 0);
-
-    // 湿度数值显示标签
-    label_humi = lv_label_create(card_humi);
-    lv_label_set_text(label_humi, "--.-%");
-    lv_obj_align(label_humi, LV_ALIGN_TOP_MID, 0, 32);
-    lv_obj_set_style_text_color(label_humi, lv_color_hex(0x319795), 0);
-    lv_obj_set_style_text_font(label_humi, &font_chinese_9, 0);
-
-    // 湿度进度条
-    bar_humi = lv_bar_create(card_humi);
-    lv_obj_set_size(bar_humi, 85, 8);
-    lv_obj_align(bar_humi, LV_ALIGN_BOTTOM_MID, 0, 0);      // 紧贴卡片底部
-    lv_bar_set_range(bar_humi, 0, 100);                    // 湿度量程 0~100%
-    lv_bar_set_value(bar_humi, 0, LV_ANIM_ON);
-    lv_obj_set_style_bg_color(bar_humi, lv_color_hex(0xE2E8F0), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar_humi, lv_color_hex(0x319795), LV_PART_INDICATOR);
-    lv_obj_set_style_radius(bar_humi, 2, 0);
-
-    // ===================== 底部状态栏 =====================
-    lv_obj_t *footer = lv_obj_create(scr);
-    lv_obj_set_width(footer, lv_obj_get_width(scr));         // 宽度铺满整屏
-    lv_obj_set_height(footer, 32);                          // 状态栏高度32
-    lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, 0);        // 贴屏幕底部
-    lv_obj_set_style_bg_color(footer, lv_color_hex(0x121A2C), 0); // 深色背景
-    lv_obj_set_style_radius(footer, 0, 0);
-    lv_obj_set_style_border_width(footer, 1, 0);
-    lv_obj_set_style_border_color(footer, lv_color_hex(0x121A2C), 0);
-    lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);       // 禁止状态栏滑动
-    lv_obj_set_scrollbar_mode(footer, LV_SCROLLBAR_MODE_OFF);			//关闭滑动条
-
-    // 状态栏左侧：WiFi 连接状态（LVGL 内置 WiFi 图标 + 英文，不占中文字库）
-    label_status = lv_label_create(footer);
-    lv_label_set_text(label_status, LV_SYMBOL_WIFI" OFF");
-    lv_obj_align(label_status, LV_ALIGN_LEFT_MID, 6, 0);
-    lv_obj_set_style_text_color(label_status, lv_color_hex(0xFF6B6B), 0);
-    lv_obj_set_style_text_font(label_status, &lv_font_montserrat_14, 0);
-
-    // 右侧：系统运行时长
-    label_uptime = lv_label_create(footer);
-    lv_label_set_text(label_uptime, "运行 00:00:00");
-    lv_obj_align(label_uptime, LV_ALIGN_RIGHT_MID, -6, 0);
-    lv_obj_set_style_text_color(label_uptime, lv_color_hex(0xC9D8E8), 0);
-    lv_obj_set_style_text_font(label_uptime, &font_chinese_9, 0);
-
-    // ===================== 右上角 日志按钮 =====================
-    btn_test = lv_btn_create(scr);                          // 创建按键
-    lv_obj_set_size(btn_test, 65, 35);                      // 按键尺寸
-    lv_obj_align(btn_test, LV_ALIGN_TOP_RIGHT, -3, 3);      // 屏幕右上角
-    lv_obj_set_style_bg_color(btn_test, lv_color_hex(0x4A90E2), 0); // 蓝色按键
-    lv_obj_set_style_radius(btn_test, 4, 0);                // 按键圆角
-
-    // 按钮文字
-    lv_obj_t *lab_btn = lv_label_create(btn_test);
-    lv_label_set_text(lab_btn, "日志");
-		lv_obj_align(lab_btn, LV_ALIGN_CENTER, 0, 0); 
-    lv_obj_set_style_text_color(lab_btn, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lab_btn, &font_chinese_9, 0);
-
-    // 绑定点击事件回调函数
-    lv_obj_add_event_cb(btn_test, btn_click_jump_log, LV_EVENT_CLICKED, NULL);
-
-    // 返回当前页面句柄
     return scr;
 }
-/*
-事件触发→Log_Write→打包Log_Obj→W25Q存入→log_write_offset++
-                                  ↓
-点击日志按钮→page_log_refresh→从log_write_offset倒序向前读→渲染列表(新在上)
 
-从 ** 日志尾部（即将写入的空白地址）** 往前一条一条读；
-读到有效日志立刻加到列表，先读到的最新日志排在最上面；
-最多 30 条，旧日志不会被擦除，但超出条数不再显示；
-每次打开日志页清空列表，重新倒序刷新。
-*/
-//刷新日志列表，从flash读取日志      效果：新日志置顶，老日志自动不在列表展示，不用每次全擦分区。
-void page_log_refresh(void)
-{
-    if(list_log == NULL) return;
-    lv_obj_clean(list_log);		//清空列表原有所有条目
+/* ---- 数据刷新 ---- */
+static float last_temp = -999, last_humi = -999, last_light = -99999;
 
-    Log_Obj log_tmp;
-	uint32_t offset = log_write_offset;		//下一条要写入的空白地址，最后一条有效日志在它前面(日志写指针 为空白地址)
-    char buf[128];
-    const char *level_str;
-    uint8_t cnt=0;		//计数，最多只显示 30 条日志
-
-    // 倒着往前读，最多30条
-    while(offset >= LOG_OBJ_SIZE && cnt<30)
-    {
-        offset -= LOG_OBJ_SIZE;					//地址先往前挪一条日志长度，指向当前最后一条有效日志的起始地址
-        if(Log_ReadOne(offset,&log_tmp) == 0)
-        {
-            uint32_t sec = log_tmp.time_stamp / 1000U;
-            uint32_t h = sec / 3600U;
-            uint32_t m = (sec % 3600U) / 60U;
-            uint32_t s = sec % 60U;
-
-            switch(log_tmp.level)
-            {
-                case LOG_INFO:  level_str="INFO";break;
-                case LOG_WARN:  level_str="WARN";break;
-                case LOG_ERROR: level_str="ERROR";break;
-                default:level_str="UNK";break;
-            }
-            snprintf(buf,sizeof(buf),"%02u:%02u:%02u %s %s",(unsigned)h,(unsigned)m,(unsigned)s,level_str,log_tmp.content);
-            lv_list_add_text(list_log,buf);
-            cnt++;
-        }
-    }
-
-    if(cnt == 0)
-    {
-        lv_list_add_text(list_log, "(no logs)");
-    }
-}
-
-
-extern TickType_t idle_tick;
-extern uint8_t lcd_bl_en ; //1亮屏 0熄屏
-// 更新函数
 void page_main_update_data(float temp, float humi, float light)
 {
-    static float temp_last=-999;
-    static float humi_last=-999;
-    static float light_last=-99999;
+    if (temp == last_temp && humi == last_humi && light == last_light)
+        return;
 
-		//数据变化才更新
-    if(temp!=temp_last || humi!=humi_last || light!=light_last)
+    lv_label_set_text_fmt(label_temp, "%.1f", temp);
+    lv_label_set_text_fmt(label_humi, "%.0f", humi);
+    lv_label_set_text_fmt(label_light, "%.0f", light);
+    lv_arc_set_value(arc_temp, (int16_t)temp);
+    lv_arc_set_value(arc_humi, (int16_t)humi);
+
+    /* 数据大幅跳变时亮屏（沿用原版行为：突变即提醒） */
+    extern TickType_t idle_tick;
+    extern uint8_t lcd_bl_en;
+    if ((temp - last_temp > 3 || last_temp - temp > 3) ||
+        (humi - last_humi > 3 || last_humi - humi > 3) ||
+        (light - last_light > 10 || last_light - light > 10))
     {
-        lv_label_set_text_fmt(label_temp, "%.1fC", temp);
-        lv_label_set_text_fmt(label_humi, "%.1f%%", humi);
-        lv_label_set_text_fmt(label_light, "%.0fL", light);
-
-				//改变进度条的值
-        lv_bar_set_value(bar_temp, (int)temp, LV_ANIM_ON);
-        lv_bar_set_value(bar_humi, (int)humi, LV_ANIM_ON);
-        lv_bar_set_value(bar_light, (int)light, LV_ANIM_ON);
-
-			if((temp-temp_last)>3 || (temp-temp_last)<-3 || (humi-humi_last)>3 || (humi-humi_last)<-3|| (light-light_last)>10 || (light-light_last)<-10)
-			{
-			//数据改变后亮屏
-			      idle_tick = xTaskGetTickCount();
-            HAL_GPIO_WritePin(LCD_BL_GPIO_Port,LCD_BL_Pin,GPIO_PIN_SET);
-            lcd_bl_en = 1;
-			}
-			
-			
-        temp_last=temp;
-        humi_last=humi;
-        light_last=light;
-			
+        idle_tick = xTaskGetTickCount();
+        HAL_GPIO_WritePin(GPIOF, GPIO_PIN_10, GPIO_PIN_SET);
+        lcd_bl_en = 1;
     }
+
+    last_temp = temp; last_humi = humi; last_light = light;
 }
 
-
-
-// 更新连接状态
 void page_main_update_status(uint8_t wifi, uint8_t mqtt)
 {
-	if(!label_status) return;																									//创建成功为1 label_status 底部部件文本
-    if(!wifi)
+    if (!label_status) return;
+    /* 判据顺序有讲究：wifi_connected 只是"最近一次 join 的结果"——模块开机
+     * 自己连上热点时它不会置 1，WiFi 半路掉了它也不会清 0，让它当第一判据
+     * 会撒谎。MQTT 能在线就必然踩着一条活的 WiFi 连接，所以以它为最高优先。 */
+    if (mqtt)
     {
-        lv_label_set_text(label_status, LV_SYMBOL_WIFI" OFF");
-        lv_obj_set_style_text_color(label_status, lv_color_hex(0xFF6B6B), 0);
+        lv_label_set_text(label_status, LV_SYMBOL_WIFI " ONLINE");
+        lv_obj_set_style_text_color(label_status, lv_color_hex(C_OK), 0);
     }
-    else if(!mqtt)
+    else if (wifi)
     {
-        lv_label_set_text(label_status, LV_SYMBOL_WIFI" NO CLOUD");
-        lv_obj_set_style_text_color(label_status, lv_color_hex(0xF6AD55), 0);
+        lv_label_set_text(label_status, LV_SYMBOL_WIFI " NO CLOUD");
+        lv_obj_set_style_text_color(label_status, lv_color_hex(C_WARN), 0);
     }
     else
     {
-        lv_label_set_text(label_status, LV_SYMBOL_WIFI" ONLINE");
-        lv_obj_set_style_text_color(label_status, lv_color_hex(0x2ECC71), 0);
+        lv_label_set_text(label_status, LV_SYMBOL_WIFI " OFF");
+        lv_obj_set_style_text_color(label_status, lv_color_hex(C_FAIL), 0);
     }
 }
 
-// 更新运行时间
 void page_main_update_uptime(uint32_t seconds)
 {
-    if(!label_uptime) return;
-    uint32_t h = seconds / 3600;
-    uint32_t m = (seconds % 3600) / 60;
-    uint32_t s = seconds % 60;
-    lv_label_set_text_fmt(label_uptime, "运行 %02u:%02u:%02u", (unsigned)h, (unsigned)m, (unsigned)s);
+    if (!label_uptime) return;
+    uint32_t h = seconds / 3600, m = (seconds % 3600) / 60, s = seconds % 60;
+    lv_label_set_text_fmt(label_uptime, "运行 %02u:%02u:%02u",
+                          (unsigned)h, (unsigned)m, (unsigned)s);
 }
 
+void page_main_update_clock(uint8_t h, uint8_t m, uint8_t s, uint8_t synced)
+{
+    if (!label_clock) return;
+    lv_label_set_text_fmt(label_clock, "%02u:%02u:%02u", h, m, s);
+    /* 未校时（没联网 SNTP 成功过、也没手动设过）→ 暗色，别装成准的 */
+    lv_obj_set_style_text_color(label_clock,
+                                lv_color_hex(synced ? C_TEXT : C_DIM), 0);
+}
 
+void page_main_update_date(uint16_t y, uint8_t mo, uint8_t d, uint8_t synced)
+{
+    if (!label_date) return;
+    if (!synced) {
+        lv_label_set_text(label_date, "--");     /* 没校过时，日期没有可信来源，别显示种子假日期 */
+        lv_obj_set_style_text_color(label_date, lv_color_hex(C_DIM), 0);
+        return;
+    }
+    lv_label_set_text_fmt(label_date, "%04u-%02u-%02u", y, mo, d);
+    lv_obj_set_style_text_color(label_date, lv_color_hex(C_TEXT), 0);
+}

@@ -21,9 +21,11 @@
 #include "esp_uart.h"
 #include "ESP_at.h"
 #include "cloud.h"
+#include "wifi_conn.h"
 #include "tasks.h"
 #include "w25qxx.h"
 #include "log.h"
+#include "clock.h"
 #include "cache.h"
 #include <stdlib.h>
 
@@ -162,16 +164,75 @@ if (data_q.valid != 0)   /* 无效数据不进断网缓存，避免重连后补�
 */
 void AT(void)
 {
-	MQTT_Init();							//连接成功后 g_mqtt_connected为1 否则为0
+	/* 开机首次连接也必须持锁：MQTT 任务这时可能已经在跑（例如上电后立刻要补传缓存），
+	 * 它会拿同一把锁去读写 UART4 —— 不持锁就是两边抢同一份 AT 应答，
+	 * 结果是"开机随机连不上，非要等下一轮 10s 重连才好"。 */
+	xSemaphoreTake(uart1_mutex, portMAX_DELAY);
+	MQTT_Init();						//连接成功后 g_mqtt_connected为1 否则为0
+	xSemaphoreGive(uart1_mutex);
 
     uint8_t heart_fail = 0;  // 心跳连续失败次数
+    static uint8_t sntp_tries = 0;   // SNTP 尝试次数（封顶用）
     for (;;)
     {
-        vTaskDelay(10000);  // 每 10 秒检测一次心跳						
+        /* 分段等待：WiFi 设置页的重连请求 / 扫描请求 / 校时请求可即时打断 10s 心跳间隔 */
+        for (int i = 0; i < 10 && !wifi_reconnect_request && !wifi_scan_request
+                       && !wifi_timesync_request; i++)
+            vTaskDelay(1000);
         xSemaphoreTake(uart1_mutex, portMAX_DELAY);	//阻塞获取互斥锁
-				RingBuf_Clear();														//关键点 先清空缓冲区 否则有脏数据影响判断
+
+        /* WiFi 设置页的点名扫描：在持锁的 AT 语境里做（UI 线程只置标志，不阻塞界面）。
+         * 只在"退不出透传"（-1）时重试一次 —— 这是最常见的瞬时失败，且这种失败
+         * 本身很便宜（~6s）；而 CWLAP 无应答/报错要占满 12s 窗口，再重试一次就
+         * 是 ~36s 独占串口，会把 MQTT 发布和心跳一起挤掉，不如等用户再点一次刷新。 */
+        if (wifi_scan_request)
+        {
+            wifi_scan_request = 0;
+            int ap = wifi_scan_locked();
+            if (ap == -1)
+            {
+                dbg_print("[NET] scan retry\r\n");
+                ap = wifi_scan_locked();
+            }
+            wifi_scan_state = (ap < 0) ? WIFI_SCAN_FAIL : WIFI_SCAN_DONE;
+        }
+
+        /* 设置页"同步当前时间"：手动立即校一次（已校过也允许——重校正是按钮的意义；
+         * 模块当前在透传还是 AT 态，由 locked 函数自己收拾）。结果进日志页，
+         * 校上后主屏时钟/日期立刻变亮变准，就是最直观的确认。 */
+        if (wifi_timesync_request)
+        {
+            wifi_timesync_request = 0;
+            if (wifi_time_sync_locked() == 0) {
+                wifi_timesync_result = 1;       /* 设置页轮询它显示"校时成功/失败" */
+                Log_Write(LOG_INFO, "time synced");
+            } else {
+                wifi_timesync_result = 2;
+                Log_Write(LOG_WARN, "timesync fail");
+            }
+        }
+
+        /* WiFi 设置页请求重连：置离线走 RE 全量重连（新凭据已由 wifi_conn_save 生效）。
+         * 标志必须等重连尝试完整跑完才清——UI 靠它显示 Connecting 全程。 */
+        uint8_t wifi_req = wifi_reconnect_request;
+        if (wifi_req) {
+            g_mqtt_connected = 0;             // 设置页保存了新凭据：强制全量重连
+        }
+				RingBuf_Clear();											//关键点 先清空缓冲区 否则有脏数据影响判断
         if (g_mqtt_connected)
         {
+            /* SNTP 校时：封顶 5 次。
+             * 为什么封顶——校时全程要独占 ESP 串口（退透传+配置+等对时+恢复，单次可到
+             * 十几秒），若 AT 固件不支持 CIPSNTP 或 NTP 被墙，无限重试会把心跳和 MQTT
+             * 发布全挤掉，表现出来像"连上了却发不出数据/经常掉线"。
+             * （"模块还没对上 NTP"的等待已在 wifi_time_sync_locked 内部轮询吸收，不耗次数） */
+            if (!Clock_IsSynced() && sntp_tries < 5)
+            {
+                sntp_tries++;
+                if (wifi_time_sync_locked() != 0)
+                    Log_Write(LOG_WARN, "sntp fail (clock stays dim)");
+            }
+
             // 发送 PINGREQ
             MQTT_SendPing();
 
@@ -200,6 +261,8 @@ void AT(void)
 				{				//重连
                 RE_MQTT_Init();    
 				}
+        if (wifi_req)
+            wifi_reconnect_request = 0;   // 尝试完整结束才清，UI 全程显示 Connecting
         xSemaphoreGive(uart1_mutex);					//释放锁
     }
 }
@@ -259,14 +322,6 @@ void UI(void)
         if (xQueueReceive(lvgl_data_queue, &disp_data, 0) == pdPASS)
         {
             page_main_update_data(disp_data.temp, disp_data.shi,disp_data.light);
-            
-            if(HAL_GPIO_ReadPin(LCD_BL_GPIO_Port, LCD_BL_Pin) == GPIO_PIN_RESET)
-            {
-                dbg_print("数据亮屏,此时P10是0,lcd_bl_en = %d\n", lcd_bl_en);
-            }
-            else{
-                dbg_print("数据亮屏,此时P10是1,lcd_bl_en = %d\n", lcd_bl_en);
-            }
         }
 
         // WiFi/MQTT 状态变更也刷新亮屏
@@ -283,12 +338,17 @@ void UI(void)
         }
 
 				
-				//更新运行时间
+        //更新运行时间 + 实时时间（同一个每秒节奏，省一次 tick 比较）
         uint32_t uptime = (xTaskGetTickCount() - start_tick) / configTICK_RATE_HZ;			//秒数
         if (uptime != last_uptime)
         {
             last_uptime = uptime;
             page_main_update_uptime(uptime);					//更新ui时间显示
+            uint16_t yr; uint8_t mo, dd, hh, mm, ss;
+            uint8_t synced = Clock_IsSynced();
+            Clock_GetDateTime(&yr, &mo, &dd, &hh, &mm, &ss);
+            page_main_update_clock(hh, mm, ss, synced);   //实时时间（未校时显示暗色）
+            page_main_update_date(yr, mo, dd, synced);    //左上角日期（未校时显示 --）
         }
 				
         lv_timer_handler();			//5毫秒刷新函数

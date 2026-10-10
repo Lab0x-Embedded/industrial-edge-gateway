@@ -1,47 +1,74 @@
 # industrial-edge-gateway（STM32F407ZGT6 移植版）
 
-工业边缘网关（FreeRTOS + LVGL 8.3）：Modbus 传感器采集 → RS485、ESP8266 上云 MQTT、W25Q128 断网缓存与日志、看门狗、LVGL 触摸界面。
+工业边缘网关（FreeRTOS + LVGL 8.3）：Modbus RTU 从机采集 → RS485、ESP8266 上云 MQTT（E2 / OneNET，profile 切换）、W25Q128 断网缓存与系统日志、看门狗、LVGL 触摸界面。
 原项目为 STM32F411 + SPI 屏，本工程已完整移植到 **启明欣欣 STM32F407ZGT6 高配版 V4.1 + 2.8 寸 ILI9341 并口屏（XPT2046 触摸）**。
 
 - CubeMX 工程：`industrial-edge-gateway.ioc`（CubeMX 6.18.1 / FW_F4 V1.28.3，工具链 CMake+GCC）
-- 编译产物：`build/industrial-edge-gateway.elf / .bin / .hex`
-- 资源占用：Flash 367KB / 1MB（36%），RAM 90KB / 128KB（70%）
+- 配套从机板：`ModbusSlave/`（第二块 F407 板模拟 0x01 温湿度[DHT11 实测] / 0x02 光照[PF3 ADC] 两台 Modbus 从机）
+- 资源占用（网关，Debug 构建实测）：Flash ≈441KB / 1MB（42%），RAM ≈114KB / 128KB（87%）；从机：Flash 27KB，RAM 2.5KB
 
+![](./docs/preview/home.jpg)
 
-## 使用方法
+## 使用方法（CubeMX / VS Code）
 
 1. 使用 STM32CubeMX 导入 `industrial-edge-gateway.ioc`，CubeMX 版本为 6.18.1。
-2. 点击 “Generate Code”，基于 CMake 生成工程。根据你使用的编辑器选择对应的 Toolchain，默认是 CMake + GCC。
+2. 点击 "Generate Code"，基于 CMake 生成工程。根据你使用的编辑器选择对应的 Toolchain，默认是 CMake + GCC。
 3. 配置 VS Code 运行工程：安装最新版 VS Code，并安装 [STM32CubeMX 扩展](https://marketplace.visualstudio.com/items?itemName=stmicroelectronics.stm32-vscode-extension)。
-4. 根据右下角提示进行配置，通常一路点击“是”即可。烧录时，使用 Debug 模式并创建 `launch.json` 文件。
+4. 根据右下角提示进行配置，通常一路点击"是"即可。烧录时，使用 Debug 模式并创建 `launch.json` 文件。
+
+> 注意：CubeMX 重新生成代码后，核对 `Core/Src/stm32f4xx_it.c` 里的 `TIM4_IRQHandler` 是否还在（HAL 时基，丢失=开机死机）。
 
 ## 目录结构
 
 ```
-Core/                  CubeMX 生成（时钟168M、FSMC、UART4+DMA、USART2、SPI1、TIM3、RTC、IWDG、FreeRTOS）
+Core/                  CubeMX 生成（时钟168M、FSMC、UART4+DMA、USART2、UART5调试、SPI1、TIM3、TIM4时基、RTC、IWDG、FreeRTOS）
 User/
-  code/                应用任务 + LCD/触摸驱动（FSMC 并口版，含补全的 LCD_WritePixels / TP_Get_Calibrated）
-  ESP8266/             AT 指令 + MQTT（(已删除)），串口已改 huart4(PA0/PA1) + DMA1 S2/S4
-  model/               Modbus RTU 主站（USART2 PA2/PA3，方向脚 PG6）
-  SPI_Flash/           W25Q128（SPI1 PB3/4/5，CS=PG8）；日志分区 0~4MB，补传缓存 4~8MB
-  Lvgl/                LVGL 8.3 + 界面 + porting（LV_COLOR_16_SWAP=0，并口屏）
+  app/                 业务任务调度（tasks.c，原 Taskhandel）、时间服务（clock.c：单调 tick 走时 + RTC/编译时间定初值）
+  bsp/                 板级驱动：lcd.c（FSMC 并口 ILI9341）、touch.c（XPT2046 + 两点校准）
+  modbus/              Modbus RTU 主站（USART2 PA2/PA3 9600，方向脚 PG6；数据有效性门控）
+  net/                 cloud.c（云平台 profile 层：E2/OneNET）、wifi_conn.c（入网/凭据/热点扫描/SNTP 校时）、esp_at.c（AT 驱动）、esp_uart.c（UART4 DMA 接收环形缓冲）
+  storage/             w25qxx.c（W25Q128 SPI1 PB3/4/5，CS=PG8 驱动）、log.c（日志 0~4MB）、cache.c（断网补传缓存 4~8MB）
+  gui/                 LVGL 8.3（src/）、porting/（显示/触摸移植）、ui/（界面页面 + ui_theme.c 色板/样式 + font_cjk_14.c 中文字体）、lv_conf.h
+ModbusSlave/           从机固件（独立 CMake 工程）：DHT11=PA15、光敏=PF3(ADC3_IN9)、RS485 从机 0x01/0x02
+tools/                 modbus_sim.py（PC 模拟从机）、modbus_master_test.py（PC 当主机直测从机板）
+docs/                  系统架构图（mermaid）、调试排查手册（18 个实战案例）
+Makefile               make build / slave / flash / flash-slave / size ...（封装 CMake preset）
 ```
 
 ## 构建（macOS，GCC）
 
 ```bash
-cmake -B build -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-# 产物 build/industrial-edge-gateway.elf；如需 bin/hex：
-arm-none-eabi-objcopy -O binary build/industrial-edge-gateway.elf build/industrial-edge-gateway.bin
+make            # 网关固件（= cmake --preset Debug && cmake --build --preset Debug）
+make slave      # 从机固件（独立构建目录 ModbusSlave/build/）
+make size       # 网关 Flash/RAM 占用；make size-slave 同理
 ```
 
-工具链用 CubeIDE/CubeMX 自带的 GNU Tools for STM32（`~/Library/Application Support/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2`），`cmake/gcc-arm-none-eabi.cmake` 已指向它。Homebrew 的 arm-none-eabi-gcc 缺 newlib 头文件，不可用。
+工具链用 STM32Cube 自带 GNU Tools（`cmake/gcc-arm-none-eabi.cmake` 已指向），Homebrew 的 arm-none-eabi-gcc 缺 newlib 不可用。
+**Makefile 目前仅支持 macOS**：工具链路径写死了 macOS 的 STM32Cube bundle 位置（`~/Library/Application Support/stm32cube/...`），Windows/Linux 需改 `cmake/gcc-arm-none-eabi.cmake` 里的 `ST_TOOLCHAIN_DIR` 和 Makefile 的 `CUBE_BIN`。
+**注意**：必须走 `cmake --preset`（工具链在 preset 里）；手工 `cmake -S . -B build` 会在 build 阶段报 startup 文件语法错误。
 
 ## 烧录
 
-- **STM32CubeProgrammer**：连 SWD（板载 JTAG/SWD 座或 CMSIS-DAP），刷 `build/industrial-edge-gateway.hex`。
-- **Keil 用户**：也可用 CubeMX 把 Toolchain 改为 MDK-ARM 重新生成工程后编译（应用代码都在 User CODE 区和 User/ 目录，不会丢）。
+```bash
+make flash                       # 网关（openocd + ST-Link，可换 FLASH_TOOL=pyocd 等）
+make flash-slave                 # 从机板（ST-Link 换接从机 SWD 后）
+make reset / make openocd        # 复位 / 起 gdbserver
+```
+
+- 也可用 STM32CubeProgrammer / Keil / VS Code 调试配置，应用代码都在 USER CODE 区和 User/ 目录，不会丢。
+- 调试串口：**UART5 = PC12(TX)/PD2(RX)，115200**（CH340 USB-TTL），输出联网阶段、日志镜像、OneNET 回执。
+
+## 云平台切换（cloud.h）
+
+```c
+#define CLOUD_TARGET  CLOUD_E2      /* CLOUD_E2（局域网自建平台，默认）/ CLOUD_ONENET（Studio） */
+```
+
+- **E2**：`E2_HOST / E2_PRODUCT_KEY / E2_DEVICE_ID / E2_DEVICE_SECRET`（设备需先在 E2 注册）
+- **OneNET**：`ONENET_HOST(mqtts.heclouds.com) / ONENET_PRODUCT_ID / ONENET_DEVICE_ID / ONENET_TOKEN`
+  （token 控制台生成，`et=` 是过期时间戳，到期设备全部掉线需重新生成）
+- 上报格式：E2 = `devices/<id>/data` datapoints JSON；OneNET = `$sys/{pid}/{dev}/thing/property/post` 物模型包装格式。
+  **数据有效性门控**：某设备从未成功读到过数据时，其字段不会出现在 payload 里（全 0 假数据不上云、不进断网缓存）。
 
 ## 引脚对照（启明欣欣 V4.1）
 
@@ -49,26 +76,36 @@ arm-none-eabi-objcopy -O binary build/industrial-edge-gateway.elf build/industri
 |---|---|
 | LCD FSMC 16 位并口 | NE4=PG12，RS=A12=PG2，NOE=PD4，NWE=PD5，D0~D15=PD14/15、PD0/1、PD8/9/10、PE7~PE15 |
 | LCD 背光 | PF10（高=亮） |
-| XPT2046 触摸 | CLK=PA5，MOSI=PB1，MISO=PB2，CS=PB0，PEN=PF11 |
+| XPT2046 触摸 | CLK=PA5，MOSI=PB1，MISO=PB2，CS=PB0，PEN=PF11（低=按下）|
 | ESP8266（WIFI 座） | UART4：TX=PA0，RX=PA1，115200；RX=DMA1_Stream2，TX=DMA1_Stream4 |
 | RS485 | USART2：PA2/PA3，9600；方向 PG6（高发低收） |
-| W25Q128 | SPI1：PB3/4/5，CS=PG8 |
-| 指示灯 | LED0=PE3（MQTT 连接），LED1=PE4（缓存中），LED2=PG9（补传中）——低电平亮 |
-| LVGL 心跳 | TIM3 1ms 中断；HAL 时基 = TIM4（RTOS 下不用 SysTick） |
+| W25Q128 | SPI1：PB3/4/5，CS=PG8；**总容量 16MB**：日志 0~4MB、补传缓存 4~8MB、触摸校准参数 0xF00000，其余空闲 |
+| 指示灯 | PE3（补传中/绿）、PE4（云端在线/红）、PG9（离线存储/黄），按固件写入语义高=亮 |
+| LVGL 心跳 | TIM3 1ms 中断；HAL 时基 = TIM4（FreeRTOS 占用 SysTick，TIM4 在 CubeMX 里显示灰色属正常）|
+| 调试串口 | UART5：PC12/PD2，115200 |
 
 ## 上电验证顺序
 
-1. 屏点亮、显示 LVGL 主界面；10 秒无操作息屏，触碰唤醒。
-2. 触摸可点按界面。
-3. 串口1(RS232 座) 115200 看系统日志（storage.c 的调试打印走此口）。
-4. 接 Modbus 温湿度/光照传感器（RS485 端子），界面数据刷新。
-5. WIFI 座插 ESP8266，MQTT 连上后 LED0 常亮；拔网线测断网缓存、恢复后自动补传（LED2 闪烁）。
+1. **开机校准**：首次上电（或 W25Q 无校准数据）自动出红十字校准——按左上、右下十字中心各一次；**按住屏幕开机可强制重新校准**（换板/换屏/漂移通用）。校准值存 W25Q 0xF00000，此后免校准。
+2. 屏点亮显示主界面；10 秒无操作息屏，**触摸唤醒**（RS485 插拔本身不点亮，属正常）。
+3. 串口终端（UART5 115200）看联网阶段输出与 `[LOG]` 日志镜像；屏幕"日志"页同内容。
+4. 接从机板 RS485（A/A、B/B、共地）：屏幕温湿度/光照 800ms 刷新（DHT11 实测 + 光敏 ADC）；日志出现 `modbus back online`。
+5. WIFI 座插 ESP8266：MQTT 连上后屏幕绿 ONLINE；断网测缓存（日志 WARN）、恢复后自动补传（每轮 ≤5 条）。
 
-## 已知注意点
+## 界面（LVGL，320x240 触摸）
 
-- **RTC 用 LSI**（板上 LSE 32.768K 未确认焊接）；日志时间戳有漂移。要换 LSE：CubeMX → RTC → 时钟源选 LSE，重新生成。
-- **触摸映射为出厂粗校准**（线性 200~3900 → 320×240）。若边缘偏差大，改 `User/bsp/touch.c` 里 `TP_Get_Calibrated` 的映射系数。
-- **W25Q128 分区表**沿用原 W25Q64 布局（用满 8MB），无冲突；JEDEC ID 0xEF4018。
-- ESP8266 需为标准 AT 固件（厂家资料包有刷机教程与固件）。
-- FreeRTOS heap 15KB、LVGL 缓冲 320×30 行，F407 资源富余；如加界面元素可在 `User/gui/lv_conf.h` 调 `LV_MEM_SIZE`。
-- 息屏逻辑：10 秒无触摸/数据 → 背光灭（PF10 拉低）；有数据或 MQTT 状态变化自动亮屏。
+| 页面 | 内容 |
+|---|---|
+| 主界面 | 中文标题「边缘网关监控」+ WiFi/云状态；温/湿双弧盘仪表；**实时时间 HH:MM:SS** + 运行时长 + 设置入口；光照读数（只有数值，无进度条） |
+| 设置 | WiFi 配置 / 系统运行日志 / 关于设备 |
+| WiFi 配置 | 一行 SSID 输入框（常驻可手输）+「WiFi 列表」按钮 → 点开**全屏模态列表**（进页/超时就自动扫描，扫描在 AT 任务里异步做、界面不卡；列表按信号强度排序、显示 dBm），点某个热点即填入 SSID 并把焦点跳到密码框 |
+| 系统运行日志 | W25Q 日志倒序读取，最新置顶，INFO/WARN/ERROR 三色，时间戳是**运行时长**（`T+` 前缀，不是墙上时间） |
+| 关于设备 | 固件/板卡/LVGL/Flash/云平台 + IP、运行时长、当前时间（每秒刷新） |
+
+**实时时间从哪来**：走时基于 HAL 时基（HSE 晶振精度，不用漂移大的 LSI）；联网成功后由 ESP8266 SNTP 校一次绝对时间；板上有 VBAT 电池时 RTC 备份域做断电保持。
+没校过时的钟显示为**暗色**（不假装是准的），连上云后自动变亮。
+色板与控件样式统一在 `User/gui/ui/ui_theme.h`，换主题只改这一个文件；中文字体是 `ui/font_cjk_14.c`（14px 抗锯齿，含界面用到的全部汉字 + ASCII，**不含 LV_SYMBOL_* 图标字形**——图标标签必须继续用 montserrat）。
+## 开源协议
+
+本项目以 [MIT](./LICENSE) 协议开源：使用/修改/分发自由，只需保留版权声明。
+第三方组件沿用其各自协议：STM32 HAL（BSD-3-Clause）、FreeRTOS（MIT）、LVGL（MIT）、CMSIS（Apache-2.0）。
