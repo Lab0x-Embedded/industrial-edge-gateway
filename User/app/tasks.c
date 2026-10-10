@@ -70,7 +70,7 @@ void Modbus(void)
         
         Modbus_Upload_Json();					//将采集到的数据赋值给结构体 然后写入队列
 				
-        vTaskDelay(pdMS_TO_TICKS(800)); //秒一轮轮询所有设备（时间短点测数据就更灵敏）
+        vTaskDelay(pdMS_TO_TICKS(800)); //0.8秒一轮轮询所有设备（时间短点测数据就更灵敏）
     }
 }
 
@@ -109,8 +109,8 @@ xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
 							{
 								if (FlashCache_Read(cached, &len) == 0)					/*从读指针位置读一条缓存数据*/
 									{
-											HAL_GPIO_WritePin(GPIOE,GPIO_PIN_3,GPIO_PIN_SET);   //D0灭
-											HAL_GPIO_WritePin(GPIOG,GPIO_PIN_9,GPIO_PIN_RESET); //D2亮
+											HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_SET);   //D0灭
+											HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET); //D2亮
 											if (MQTT_PublishJson(cached) != 0) break;   /* 未收到 PUBACK 不标记已发，下轮重试同一条 */
 											FlashCache_MarkSent();				//只改魔数，不擦除、改魔数标记已补传
 									        Log_Write(LOG_WARN,"BUCHUAN*1");
@@ -132,8 +132,8 @@ xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
 							// 发实时数据 并且给ui写队列 （从数组里获取数据）
 								MQTT_SendAllDev_NoWait();
                // MQTT_SendTempHumi_NoWait(data_q.temp, data_q.shi,data_q.light);
-								HAL_GPIO_WritePin(GPIOE,GPIO_PIN_3,GPIO_PIN_RESET);   //D0亮            
-								HAL_GPIO_WritePin(GPIOE,GPIO_PIN_4,GPIO_PIN_SET);	  //D1灭		
+								HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_RESET);   //D0亮            
+								HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);	  //D1灭		
 								xSemaphoreGive(uart1_mutex);					//释放锁							
 //                xQueueOverwrite(lvgl_data_queue, &data_q);			// 写队列 永远只保留最新一次采集结果，旧值被直接覆盖 该队列长度为1
             }
@@ -142,7 +142,7 @@ xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
                 // 离线缓存
                 char json[128];
                 cloud_build_payload(json, sizeof(json), &data_q);   /* payload 格式随 CLOUD_TARGET */
-							HAL_GPIO_WritePin(GPIOE,GPIO_PIN_4,GPIO_PIN_RESET);
+							HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
 if (data_q.valid != 0)   /* 无效数据不进断网缓存，避免重连后补传全 0 */
                     FlashCache_Write(json, strlen(json));
             }
@@ -190,8 +190,8 @@ void AT(void)
                 {
                     g_mqtt_connected = 0;					//断网
 						Log_Write(LOG_WARN, "MQTT disconnect");
-						HAL_GPIO_WritePin(GPIOE,GPIO_PIN_4,GPIO_PIN_RESET);
-						HAL_GPIO_WritePin(GPIOG,GPIO_PIN_9,GPIO_PIN_SET);
+						HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
+						HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_SET);
                     heart_fail = 0;
                 }
             }
@@ -240,7 +240,7 @@ void UI(void)
             idle_tick = xTaskGetTickCount();
             if (lcd_bl_en == 0)
             {
-                HAL_GPIO_WritePin(GPIOF, GPIO_PIN_10, GPIO_PIN_SET);
+                HAL_GPIO_WritePin(LCD_BL_GPIO_Port, LCD_BL_Pin, GPIO_PIN_SET);
                 lcd_bl_en = 1;
                 lv_indev_wait_release(lv_indev_get_act());
                 dbg_print("触摸点亮屏幕,lcd_bl_en = %d\n", lcd_bl_en);
@@ -250,7 +250,7 @@ void UI(void)
 		// 空闲10s无动作 → 息屏
         if(lcd_bl_en == 1 && (xTaskGetTickCount() - idle_tick >= pdMS_TO_TICKS(10000)))
         {
-            HAL_GPIO_WritePin(GPIOF,GPIO_PIN_10,GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(LCD_BL_GPIO_Port, LCD_BL_Pin, GPIO_PIN_RESET);
             lcd_bl_en = 0;
             dbg_print("息屏,lcd_bl_en = %d\n", lcd_bl_en);
         }
@@ -260,7 +260,7 @@ void UI(void)
         {
             page_main_update_data(disp_data.temp, disp_data.shi,disp_data.light);
             
-            if(HAL_GPIO_ReadPin(TP_PEN_GPIO_Port, LCD_BL_Pin) == GPIO_PIN_RESET)
+            if(HAL_GPIO_ReadPin(LCD_BL_GPIO_Port, LCD_BL_Pin) == GPIO_PIN_RESET)
             {
                 dbg_print("数据亮屏,此时P10是0,lcd_bl_en = %d\n", lcd_bl_en);
             }
@@ -277,7 +277,7 @@ void UI(void)
 						page_main_update_status(wifi_connected, g_mqtt_connected);	//更新ui状态显示
 					
             idle_tick = xTaskGetTickCount();
-            HAL_GPIO_WritePin(GPIOF,GPIO_PIN_10,GPIO_PIN_SET);
+            HAL_GPIO_WritePin(LCD_BL_GPIO_Port, LCD_BL_Pin, GPIO_PIN_SET);
             lcd_bl_en = 1;
             dbg_print("状态变化亮屏,lcd_bl_en = %d\n", lcd_bl_en);
         }

@@ -57,31 +57,31 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define LED0_Pin GPIO_PIN_3
-#define LED0_GPIO_Port GPIOE
-#define LED1_Pin GPIO_PIN_4
-#define LED1_GPIO_Port GPIOE
-#define LCD_BL_Pin GPIO_PIN_10
-#define LCD_BL_GPIO_Port GPIOF
-#define TP_CLK_Pin GPIO_PIN_5
-#define TP_CLK_GPIO_Port GPIOA
-#define TP_CS_Pin GPIO_PIN_0
-#define TP_CS_GPIO_Port GPIOB
-#define TP_MOSI_Pin GPIO_PIN_1
-#define TP_MOSI_GPIO_Port GPIOB
-#define TP_MISO_Pin GPIO_PIN_2
-#define TP_MISO_GPIO_Port GPIOB
-#define TP_PEN_Pin GPIO_PIN_11
-#define TP_PEN_GPIO_Port GPIOF
-#define RS485_DE_Pin GPIO_PIN_6
-#define RS485_DE_GPIO_Port GPIOG
-#define W25Q_CS_Pin GPIO_PIN_8
-#define W25Q_CS_GPIO_Port GPIOG
-#define LED2_Pin GPIO_PIN_9
-#define LED2_GPIO_Port GPIOG
+#define LED0_Pin            GPIO_PIN_3
+#define LED0_GPIO_Port      GPIOE
+#define LED1_Pin            GPIO_PIN_4
+#define LED1_GPIO_Port      GPIOE
+#define LCD_BL_Pin          GPIO_PIN_10
+#define LCD_BL_GPIO_Port    GPIOF
+#define TP_CLK_Pin          GPIO_PIN_5
+#define TP_CLK_GPIO_Port    GPIOA
+#define TP_CS_Pin           GPIO_PIN_0
+#define TP_CS_GPIO_Port     GPIOB
+#define TP_MOSI_Pin         GPIO_PIN_1
+#define TP_MOSI_GPIO_Port   GPIOB
+#define TP_MISO_Pin         GPIO_PIN_2
+#define TP_MISO_GPIO_Port   GPIOB
+#define TP_PEN_Pin          GPIO_PIN_11
+#define TP_PEN_GPIO_Port    GPIOF
+#define RS485_DE_Pin        GPIO_PIN_6
+#define RS485_DE_GPIO_Port  GPIOG
+#define W25Q_CS_Pin         GPIO_PIN_8
+#define W25Q_CS_GPIO_Port   GPIOG
+#define LED2_Pin            GPIO_PIN_9
+#define LED2_GPIO_Port      GPIOG
 
 /* USER CODE BEGIN Private defines */
-
+void dbg_print(const char *fmt, ...);
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

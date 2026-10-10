@@ -3,15 +3,16 @@
  * TP_Get_Calibrated 为 LVGL indev 的对接接口（原仓库缺失，此处补全）。
  */
 #include "touch.h"
+#include "main.h"
 #include "w25qxx.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
-#define TP_CLK(x)  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, (GPIO_PinState)(x))
-#define TP_DIN(x)  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, (GPIO_PinState)(x))
-#define TP_CS(x)   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, (GPIO_PinState)(x))
-#define TP_DOUT()  HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_2)
-#define TP_PEN()   HAL_GPIO_ReadPin(GPIOF, GPIO_PIN_11)
+#define TP_CLK(x)  HAL_GPIO_WritePin(TP_CLK_GPIO_Port,  TP_CLK_Pin,  (GPIO_PinState)(x))
+#define TP_DIN(x)  HAL_GPIO_WritePin(TP_MOSI_GPIO_Port, TP_MOSI_Pin, (GPIO_PinState)(x))
+#define TP_CS(x)   HAL_GPIO_WritePin(TP_CS_GPIO_Port,   TP_CS_Pin,   (GPIO_PinState)(x))
+#define TP_DOUT()  HAL_GPIO_ReadPin (TP_MISO_GPIO_Port, TP_MISO_Pin)
+#define TP_PEN()   HAL_GPIO_ReadPin (TP_PEN_GPIO_Port,  TP_PEN_Pin)
 
 /* —— 时序对齐厂商例程 xpt2046.c（启明欣欣 HAL 库版本）：——
  * 每个时钟沿约 1µs、命令后 6µs 建立、busy 时钟后读 16 位取高 12 位(>>4)。

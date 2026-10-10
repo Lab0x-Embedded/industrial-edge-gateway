@@ -4,6 +4,7 @@
 #include "stdio.h"
 #include "stm32f4xx.h"
 #include "w25qxx.h"
+#include "main.h"
 
 // 字体声明
 extern lv_font_t font_chinese_9;
@@ -346,7 +347,7 @@ void page_main_update_data(float temp, float humi, float light)
 			{
 			//数据改变后亮屏
 			      idle_tick = xTaskGetTickCount();
-            HAL_GPIO_WritePin(GPIOF,GPIO_PIN_10,GPIO_PIN_SET);
+            HAL_GPIO_WritePin(LCD_BL_GPIO_Port,LCD_BL_Pin,GPIO_PIN_SET);
             lcd_bl_en = 1;
 			}
 			
