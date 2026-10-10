@@ -258,6 +258,19 @@ static void btn_connect_click(lv_event_t *e)
     wifi_reconnect_request = 1;      /* AT 任务 ≤1s 响应；标志在重连尝试完整结束才清 */
 }
 
+/* 小眼睛：切换密码明文/圆点。图标按"点下去会发生什么"画：
+ * 密文态显示睁眼（点它看明文），明文态显示闭眼（点它藏回去）。 */
+static void btn_eye_click(lv_event_t *e)
+{
+    lv_obj_t *btn = lv_event_get_target(e);
+    lv_obj_t *lab = lv_obj_get_child(btn, 0);
+    bool masked = lv_textarea_get_password_mode(ta_pass);
+
+    lv_textarea_set_password_mode(ta_pass, !masked);
+    lv_label_set_text(lab, masked ? LV_SYMBOL_EYE_CLOSE : LV_SYMBOL_EYE_OPEN);
+    lv_obj_center(lab);     /* 两个图标字宽不一定相等，重对一次免得歪 */
+}
+
 /* 500ms 状态轮询（仅本页可见时刷新）
  * 1) 扫描状态变化 → 重建弹窗列表；扫太久（>25s）给个"扫描超时"提示
  * 2) 连接状态四态，优先级：Connecting > WiFi FAIL > NO CLOUD > WiFi OK。
@@ -349,9 +362,9 @@ void page_wifi_open(void)
         lv_obj_t *btn_list = make_btn(scr_wifi, 104, 30, 210, 42, C_TRACK, "WiFi 列表");
         lv_obj_add_event_cb(btn_list, btn_list_click, LV_EVENT_CLICKED, NULL);
 
-        /* ---- 第 2 行：密码 + 连接（与 SSID 行同构：输入 198 + 按钮 104） ---- */
+        /* ---- 第 2 行：密码(164) + 小眼睛(30) + 连接(104)，左右边距仍对称 6px ---- */
         ta_pass = lv_textarea_create(scr_wifi);
-        lv_obj_set_size(ta_pass, 198, 30);
+        lv_obj_set_size(ta_pass, 164, 30);
         lv_obj_align(ta_pass, LV_ALIGN_TOP_LEFT, 6, 76);
         lv_textarea_set_one_line(ta_pass, true);
         lv_textarea_set_password_mode(ta_pass, true);
@@ -359,6 +372,16 @@ void page_wifi_open(void)
         lv_textarea_set_placeholder_text(ta_pass, "密码");
         ui_style_textarea(ta_pass);
         lv_obj_add_event_cb(ta_pass, ta_focus_cb, LV_EVENT_FOCUSED, NULL);
+
+        lv_obj_t *btn_eye = lv_btn_create(scr_wifi);
+        lv_obj_set_size(btn_eye, 30, 30);
+        lv_obj_align(btn_eye, LV_ALIGN_TOP_LEFT, 174, 76);
+        ui_style_btn(btn_eye, C_TRACK, C_TEXT);
+        lv_obj_t *lab_eye = lv_label_create(btn_eye);
+        lv_label_set_text(lab_eye, LV_SYMBOL_EYE_OPEN);   /* 初始密文态：点它看明文 */
+        lv_obj_set_style_text_font(lab_eye, UI_FONT_ASCII, 0);   /* 图标：必须 montserrat */
+        lv_obj_center(lab_eye);
+        lv_obj_add_event_cb(btn_eye, btn_eye_click, LV_EVENT_CLICKED, NULL);
 
         btn_conn = make_btn(scr_wifi, 104, 30, 210, 76, C_BLUE, "连接");
         lv_obj_add_event_cb(btn_conn, btn_connect_click, LV_EVENT_CLICKED, NULL);
