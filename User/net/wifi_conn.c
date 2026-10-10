@@ -166,10 +166,19 @@ int wifi_join(void)
      * 必然连不上 —— 表现就是"偶尔/经常连不上"，且日志只有一句 join failed。 */
     r = ESP_SendCmd(cmd, "WIFI GOT IP", 15000);
 
-    /* 刚复位后模块常还在自动重连旧 AP，此时 CWJAP 会被回 "busy p..."（ESP_ERROR）。
-     * 那不是密码错 —— 给它一次机会再判失败，否则会把"模块忙"误报成"密码/SSID 错"。
-     * 无法区分 busy 和密码错，重试对密码错是白等：延时从 1.5s 缩到 500ms，
-     * 密码错时少等 1s；模块忙时 500ms 通常也够它退出自动重连。 */
+    /* 重试策略（"运行时切网永远 wifi timeout、复位才好"的修复，手册 #27）：
+     * - TIMEOUT：CWJAP 撞上模块自动重连存储 AP 的 busy 窗口被 "busy p..." 丢弃
+     *   （该行不含 ERROR/FAIL 关键词，ESP_SendCmd 只能等满 15s 超时）。窗口有
+     *   3~8s，而 RST 把每次尝试都钉在同一相位上，只发一次必死 —— 2s 间隔再试，
+     *   最多 4 次，把整个窗口吸收掉。 */
+    for (int attempt = 1; r == ESP_TIMEOUT && attempt < 4; attempt++) {
+        snprintf(msg, sizeof msg, "wifi join timeout, retry #%d", attempt + 1);
+        Log_Write(LOG_WARN, msg);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        r = ESP_SendCmd(cmd, "WIFI GOT IP", 15000);
+    }
+    /* - ERROR/FAIL：模块明确拒绝（多半密码/SSID 错）→ 补试一次就定论。
+     *   真实拒绝重试 4 轮只是白等，别把"密码错"拖成一分多钟的 Connecting。 */
     if (r == ESP_ERROR) {
         vTaskDelay(pdMS_TO_TICKS(500));
         r = ESP_SendCmd(cmd, "WIFI GOT IP", 15000);
