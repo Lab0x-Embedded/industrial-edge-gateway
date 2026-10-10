@@ -33,6 +33,7 @@
 /* SPI 总线：W25Q 挂在 CubeMX 配置的 SPI1 上（PB3/PB4/PB5，为避开触摸的
  * PA5 被挪到了 B 口），句柄直接复用 CubeMX 生成的 hspi1。
 #define SPIx                            SPI1 
+*/
 #define SpiHandle                       hspi1
 
 /* 引脚定义 —— 统一复用 main.h 的 CubeMX 配置（PG8） */
