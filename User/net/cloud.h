@@ -55,8 +55,6 @@
 #define CLOUD_PROFILE_NAME  "OneNET"
 #endif
 
-/* 调试串口输出（UART5 PC12/PD2 115200），关键事件用 */
-void dbg_print(const char *fmt, ...);
 
 /* 透传模式下从 ESP8266 接收原始 TCP 数据 */
 int esp_recv_raw(int sock, uint8_t *buf, int len, int timeout_ms);

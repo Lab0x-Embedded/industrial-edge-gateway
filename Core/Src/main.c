@@ -30,6 +30,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
 #include "lcd.h"
 #include "touch.h"
 #include "modbus.h"
@@ -76,6 +77,17 @@ void MX_FREERTOS_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 uint8_t a[256];                              /* ESP8266 DMA 接收缓冲（原工程定义于此） */
+
+/* 调试串口（UART5）：只打关键事件，不逐条刷发布 */
+void dbg_print(const char *fmt, ...) {
+    char buf[128];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (n > 0)
+        HAL_UART_Transmit(&huart5, (uint8_t*)buf, n, HAL_MAX_DELAY);
+}
 /* USER CODE END 0 */
 
 /**

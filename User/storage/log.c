@@ -1,6 +1,6 @@
 /* 系统日志服务：W25Q128 日志分区的循环写入与倒序读取 */
 #include "log.h"
-#include "cloud.h"      /* dbg_print：日志镜像到调试串口 */
+#include "main.h"      /* dbg_print：日志镜像到调试串口 */
 #include <string.h>
 #include "stm32f4xx.h"
 #include "FreeRTOS.h"
@@ -51,16 +51,16 @@ void Log_Write(Log_Level level, const char *str)
 
     if (flash_mutex) xSemaphoreTake(flash_mutex, portMAX_DELAY);
 
-    /* 循环日志：写满回卷。NOR 只能 1→0，进新扇区先擦除；条目不跨扇区 */
-    if ((log_write_offset + LOG_OBJ_SIZE) > LOG_PART_SIZE)
+    /* 循环日志：写满回卷。NOR FLASH只能从 1→0，进新扇区先擦除；条目不跨扇区 */
+    if ((log_write_offset + LOG_OBJ_SIZE) > LOG_PART_SIZE)          //情况1：写入位置超出日志分区大小
         log_write_offset = 0U;
-    if (((log_write_offset & 0xFFFU) + LOG_OBJ_SIZE) > 0x1000U)
+    if (((log_write_offset & 0xFFFU) + LOG_OBJ_SIZE) > 0x1000U)     //情况2：写入位置跨扇区边界
     {
         log_write_offset += 0x1000U - (log_write_offset & 0xFFFU);
         if ((log_write_offset + LOG_OBJ_SIZE) > LOG_PART_SIZE)
             log_write_offset = 0U;
     }
-    if ((log_write_offset & 0xFFFU) == 0U)
+    if ((log_write_offset & 0xFFFU) == 0U)                          //情况3：写入位置在扇区起始地址 → 擦除该扇区
         SPI_FLASH_SectorErase(LOG_PART_ADDR + log_write_offset);
 
     part_write(LOG_PART_ADDR, log_write_offset, (uint8_t *)&log_buf, LOG_OBJ_SIZE);

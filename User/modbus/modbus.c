@@ -180,7 +180,7 @@ uint8_t Modbus_Read_Dev(uint8_t addr, uint8_t func, uint16_t reg, uint16_t regcn
         taskYIELD();  // 替代 vTaskDelay(1)，让出 CPU 但不固定延时
     }
 
-    /* 长度安全检查：最小帧为 地址 + 功能码 + 字节数 + 2 字节 CRC */
+    /* 长度安全检查：最小帧为 地址 + 功能码 + 字节数 +(此时数据位为0) + 2 字节 CRC */
     if (count < 4) return 0;
 
     uint8_t data_len = rx[2];  // 数据字节数

@@ -3,10 +3,11 @@
 
 #include "stdint.h"
 #include "stm32f4xx.h"
+#include "main.h"
 
-/* RS485 方向控制：PG6，高电平发送，低电平接收 */
-#define RS485_TX  HAL_GPIO_WritePin(GPIOG, GPIO_PIN_6, GPIO_PIN_SET)
-#define RS485_RX  HAL_GPIO_WritePin(GPIOG, GPIO_PIN_6, GPIO_PIN_RESET)
+/* RS485 方向控制：PG6，高电平发送，低电平接收（复用 main.h 的 RS485_DE 定义） */
+#define RS485_TX  HAL_GPIO_WritePin(RS485_DE_GPIO_Port, RS485_DE_Pin, GPIO_PIN_SET)
+#define RS485_RX  HAL_GPIO_WritePin(RS485_DE_GPIO_Port, RS485_DE_Pin, GPIO_PIN_RESET)
 
 /* CRC16-MODBUS 计算，flag=1 按位循环法，flag=0 查表法 */
 uint16_t CRC_16_MODBUS(uint8_t *data, uint8_t len, uint8_t flag);
@@ -21,6 +22,7 @@ typedef struct
     uint16_t err_cnt;     // 连续失败次数
     float    val1;        // 数据1
     float    val2;        // 数据2
+    float    val3;        // 数据3（可扩展）
     uint8_t  valid;       // 自上电以来至少成功读到过一次
 } ModDev_t;
 

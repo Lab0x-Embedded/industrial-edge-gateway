@@ -14,18 +14,6 @@
 
 extern uint8_t a[256];
 
-/* 调试串口（UART5）：只打关键事件，不逐条刷发布 */
-void dbg_print(const char *fmt, ...) {
-    char buf[128];
-    va_list ap;
-    va_start(ap, fmt);
-    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
-    if (n > 0)
-        HAL_UART_Transmit(&huart5, (uint8_t*)buf, n, HAL_MAX_DELAY);
-}
-
-
 /* ============================================================
  *  云平台 profile —— 两个平台都是"明文 TCP + 标准 MQTT"，
  *  差异全部收敛在这张表里；新增平台 = 加一行表项 + payload 分支。

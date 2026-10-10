@@ -13,10 +13,10 @@ static uint16_t SPI_TIMEOUT_UserCallback(uint8_t errorCode);
 
 void SPI_FLASH_Init(void)
 {
-    // 1. 初始化 CS 引脚（PB12）
-    __HAL_RCC_GPIOG_CLK_ENABLE();          // 确保 GPIOB 时钟开启
+    // 1. 初始化 CS 引脚（PG8，见 main.h 的 W25Q_CS_Pin）
+    __HAL_RCC_GPIOG_CLK_ENABLE();          // 确保 GPIOG 时钟开启
     GPIO_InitTypeDef GPIO_InitStruct = {0};
-    GPIO_InitStruct.Pin = FLASH_CS_PIN;    // PB12
+    GPIO_InitStruct.Pin = FLASH_CS_PIN;    // PG8
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
