@@ -386,11 +386,12 @@ void UI(void)
             last_wifi   = wifi_connected;
             last_status = mqtt_online;
 						page_main_update_status(wifi_connected, mqtt_online);	//更新ui状态显示
-					
-            idle_tick = xTaskGetTickCount();
-            HAL_GPIO_WritePin(LCD_BL_GPIO_Port, LCD_BL_Pin, GPIO_PIN_SET);
-            lcd_bl_en = 1;
-            dbg_print("状态变化亮屏,lcd_bl_en = %d\n", lcd_bl_en);
+
+            /* 只更新显示，不点亮屏幕：亮屏只认触摸（用户意图）。
+             * cloud_online_now() 的 25s 新鲜度窗口在扫描/校时/重连独占串口、
+             * 链路抖动时会来回翻转——原来"状态变化即亮屏"，无人操作也会
+             * 周期性亮屏（现场："板子一会儿就亮"）。息屏期间的变化由下次
+             * 点亮后的重绘自然呈现。 */
         }
 
 				
