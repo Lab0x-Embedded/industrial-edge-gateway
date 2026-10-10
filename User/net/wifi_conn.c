@@ -256,6 +256,26 @@ static void rx_selfcheck(void)
     Log_Write(LOG_WARN, "uart4 rx DEAD -> rearm");
 }
 
+/* 公开版：供 AT 任务每轮循环开头调用。
+ *
+ * 为什么必须每轮都查、而不是只在"退透传失败"时查：
+ *   手册 #22 —— ORE 会让 HAL **中止** RX DMA 且不自动重启，此后
+ *   RxEventCallback 再也不触发，板子对模块彻底"聋了"。
+ *   聋掉之后的现场非常具有欺骗性：**发得出去、收不回来** ——
+ *   PUBLISH/PINGREQ 照发（TX 正常），云平台因此显示设备在线，
+ *   而本机永远收不到 PUBACK/PINGRESP，g_cloud_alive_tick 刷不起来，
+ *   屏幕就一直 NO CLOUD。原来的自检只挂在 escape 失败路径上，而那条路
+ *   本身要先拿到 uart1_mutex —— AT 任务一旦被卡住就永远自愈不了。
+ *
+ * 返回 1 = 检测到停摆并已重新挂载；0 = 接收正常，无需动作（一次寄存器读）。 */
+int wifi_rx_selfcheck(void)
+{
+    if (huart4.RxState == HAL_UART_STATE_BUSY_RX)
+        return 0;
+    rx_selfcheck();
+    return 1;
+}
+
 /* 裸探测一次 AT：OK=确认在 AT 指令模式；模块若行缓冲里有垃圾（或被 +++ 毒过），
  * 第一发 AT 会把它拼成脏行回 ERROR —— 那条脏行已被这次 AT 消费掉，紧跟着再补
  * 一发裸 AT 就该答 OK。两发都没 OK 才算"无应答"。 */
@@ -565,7 +585,6 @@ int wifi_time_sync_locked(void)
         dbg_print("[NET] sntp %04d-%02d-%02d %02d:%02d:%02d\r\n", yr, mo, day, hh, mm, ss);
         if (!link_ok)
         {
-            /* 本函数只在线时被调用：恢复失败说明 TCP 已断，置离线让重连重建 */
             g_mqtt_connected = 0;
             Log_Write(LOG_WARN, "sntp: link lost");
         }

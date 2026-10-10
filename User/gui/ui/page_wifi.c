@@ -317,13 +317,14 @@ static void wifi_timer_cb(lv_timer_t *t)
     }
 
     /* 判据顺序与主屏一致：MQTT 在线必然踩着活的 WiFi —— 别让过期的
-     * wifi_connected（模块自连不置 1）把在线状态谎报成 WiFi FAIL。 */
+     * wifi_connected（模块自连不置 1）把在线状态谎报成 WiFi FAIL。
+     * 云端判据用 cloud_online_now()（要求最近收到过云端应答），与主屏同源。 */
     if (wifi_reconnect_request)
     {
         set_status("Connecting...", C_BLUE);
         lv_obj_add_state(btn_conn, LV_STATE_DISABLED);
     }
-    else if (g_mqtt_connected)
+    else if (cloud_online_now())
     {
         set_status("WiFi OK", C_OK);
         lv_obj_clear_state(btn_conn, LV_STATE_DISABLED);

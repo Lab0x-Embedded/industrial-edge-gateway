@@ -136,11 +136,15 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-        /* 创建 5 个业务任务后自删（优先级沿用原工程 CMSIS 数值） */
+        /* 创建 5 个业务任务后自删（优先级沿用原工程 CMSIS 数值）。
+         * MQTT 任务的栈给 1024（原 512）：-fstack-usage 量最坏链
+         * 「发布 → PUBACK 后的下行解析 → Log_Write → dbg_print → printf」约 2.9KB，
+         * 实测 uxTaskGetSystemState 的剩余栈最小值只剩 2112B/4096 = 峰值用掉 1984B，
+         * 即原来 512(word)=2KB 已到 97%，必须加。 */
         xTaskCreate(UI,        "UITask",     1024, NULL, osPriorityAboveNormal,     NULL);
         xTaskCreate(Modbus,    "SensorTask",  512, NULL, osPriorityNormal + 1,      NULL);
         xTaskCreate(AT,        "NetworkTask", 512, NULL, osPriorityNormal,          NULL);
-        xTaskCreate(MQTT,      "MQTTTask",    512, NULL, osPriorityNormal,          NULL);
+        xTaskCreate(MQTT,      "MQTTTask",    1024, NULL, osPriorityNormal,          NULL);
         xTaskCreate(Dog_task,  "Dog_task",    512, NULL, osPriorityAboveNormal + 2, NULL);
 
         power_tick = xTaskGetTickCount();

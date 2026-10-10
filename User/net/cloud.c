@@ -267,6 +267,17 @@ void MQTT_Init(void) {
    * 回 ERROR，那正是日志里"没有 tcp fail、只有 passthrough fail"的一种成因。
    * CIPMODE 不进 flash，AT+RST 后清零，所以 RE_MQTT_Init 也要各设一遍。 */
   ESP_SendCmd_OK("AT+CIPMUX=0\r\n", 2000);
+
+  /* 【修复·关键】校时放在**这里**（CIPMUX=0 之后、CIPSTART/CIPSEND 之前）：
+   *   · 必须在 CIPMUX=0 之后 —— 实测在此之前调 CIPSNTPCFG，模块不认（10s 超时）；
+   *   · 必须在建会话之前 —— 此刻仍在 AT 指令态，wifi_at_escape() 被裸探测直接确认，
+   *     不需要 +++ 去退出正在工作的透传。
+   * 原来的顺序是"MQTT 连上之后再校时"，必然要 +++ 退透传；而**退出后再 AT+CIPSEND
+   * 重进去的透传是假的**（模块回 "OK\r\n\r\n>" 却再也不转发任何数据）：PUBACK/PINGRESP
+   * 全无、平台侧看设备就是离线，本机还傻等 30 秒才重连（现场实测 UART5 打印的
+   * "模块最后字节"恒为 0A 4F 4B 0D 0A 0D 0A 3E = OK\r\n\r\n>，就是这一步留下的）。 */
+  if (wifi_time_sync_locked() != 0)
+    Log_Write(LOG_WARN, "sntp fail (clock stays dim)");
   ESP_SendCmd_OK("AT+CIPMODE=1\r\n", 2000);
 
   snprintf(cmd, sizeof cmd, "AT+CIPSTART=\"TCP\",\"%s\",%u\r\n", p->host,
@@ -289,12 +300,10 @@ void MQTT_Init(void) {
   if (mqtt_wait_connack()) {
     mqtt_send_subscribe();
     g_mqtt_connected = 1;
+    /* CONNACK 是云端刚回的字节 —— 在线新鲜度从这里起算，
+     * 免得主屏在"连上但还没发第一次心跳"的几秒里先闪一下离线。 */
+    g_cloud_alive_tick = xTaskGetTickCount();
     Log_Write(LOG_INFO, "CONNECT FINISH");
-    /* 连上就当场校一次时：原来挂在 10s 心跳循环里且"校过就不再跑"——等得久，
-     * 且 RTC 走 LSI 会慢慢漂。这里顺手对表的代价只有几秒，失败不影响在线
-     * 状态，心跳循环里还留着"未校时兜底重试"。 */
-    if (wifi_time_sync_locked() != 0)
-      Log_Write(LOG_WARN, "sntp fail (clock stays dim)");
   } else {
     g_mqtt_connected = 0;
     Log_Write(LOG_WARN, "connack failed");
@@ -356,6 +365,7 @@ void RE_MQTT_Init(void) {
   if (mqtt_wait_connack()) {
     mqtt_send_subscribe();
     g_mqtt_connected = 1;
+    g_cloud_alive_tick = xTaskGetTickCount();   /* 同 MQTT_Init：CONNACK 即在线证据 */
     Log_Write(LOG_INFO, "reconnect success");
     /* 同 MQTT_Init：连上即校时，别等心跳循环 */
     if (wifi_time_sync_locked() != 0)
@@ -466,6 +476,9 @@ int cloud_publish(const char *payload) {
     if (esp_recv_raw(0, ack, 4, 2000) != 4 || ack[0] != 0x40) {
       return -1; /* 未收到 PUBACK */
     }
+    /* PUBACK 也是云端应答 = 链路活着的证据。发布期间 AT 任务拿不到锁、
+     * 发不出心跳，这条刷新能保证补传/上报密集时不把在线状态误判成离线。 */
+    g_cloud_alive_tick = xTaskGetTickCount();
     mqtt_drain_downlink(); /* 平台回执（code）进日志页，同时保持字节流对齐 */
   }
   return 0;

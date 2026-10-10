@@ -24,7 +24,7 @@ static lv_obj_t *label_count = NULL;
 static void btn_back(void)
 {
     lv_scr_load(main_scr);
-    page_main_update_status(wifi_connected, g_mqtt_connected);   /* 返回后刷新主界面状态 */
+    page_main_update_status(wifi_connected, cloud_online_now());   /* 返回后刷新主界面状态 */
 }
 
 static void btn_refresh_click(lv_event_t *e)

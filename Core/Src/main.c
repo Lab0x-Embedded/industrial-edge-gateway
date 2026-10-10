@@ -85,8 +85,14 @@ void dbg_print(const char *fmt, ...) {
     va_start(ap, fmt);
     int n = vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    if (n > 0)
-        HAL_UART_Transmit(&huart5, (uint8_t*)buf, n, HAL_MAX_DELAY);
+    if (n <= 0)
+        return;
+    /* vsnprintf 的返回值是"本该写多长"，**可能大于 buf 的大小**：
+     * 原来直接把这个 n 交给 HAL_UART_Transmit，越界的部分会把栈上 128 字节之外的
+     * 邻近内存当数据发出去（越界读）。必须自己截断。 */
+    if (n > (int)sizeof(buf) - 1)
+        n = (int)sizeof(buf) - 1;
+    HAL_UART_Transmit(&huart5, (uint8_t *)buf, (uint16_t)n, HAL_MAX_DELAY);
 }
 /* USER CODE END 0 */
 
