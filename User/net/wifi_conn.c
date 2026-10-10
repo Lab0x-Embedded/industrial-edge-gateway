@@ -3,6 +3,7 @@
 #include "wifi_conn.h"
 #include "w25qxx.h"
 #include "esp_at.h"
+#include "ipv4_parse.h"   /* 抓最后一个 IPv4 字面量（纯函数，主机侧有单测） */
 #include "esp_uart.h"
 #include "usart.h"
 #include "cloud.h"      /* dbg_print */
@@ -118,28 +119,39 @@ int wifi_conn_save(const char *ssid, const char *pass)
     return 0;
 }
 
-/* 入网成功后查 IP（此时在 AT 模式，应答走 UART4 环形缓冲） */
+/* 入网成功后查 IP。
+ * 为什么不能再用 ESP_SendCmd：它是"匹配到就丢弃"的流式实现（CWLAP 那次就
+ * 踩过，手册 #23 同款），等 "STAIP" 关键字命中时整行——IP 就在这一行——
+ * 已经被吃进局部 line 缓冲丢掉了。原实现命中后再抢读 600ms，读到的只有
+ * STAMAC/OK，所以 g_esp_ip 实际永远停在 "--"。
+ * 这里照 CWLAP 的收法：整段应答收完（OK/ERROR/超时），再用纯函数解析器
+ * 抓**最后一个** IPv4 字面量（ipv4_parse.h，主机侧有单测）。 */
 static void wifi_query_ip(void)
 {
-    char line[96];
+    static char buf[256];       /* CIFSR 应答含回显不到 128B；静态免任务栈压力 */
     int n = 0;
-    ESP_SendCmd("AT+CIFSR\r\n", "STAIP", 2000);
+
+    RingBuf_Clear();            /* 入网刚成功，缓冲里可能有残留杂字节 */
+    HAL_UART_Transmit(&huart4, (uint8_t *)"AT+CIFSR\r\n", 10, 100);
     uint32_t t0 = HAL_GetTick();
-    while ((HAL_GetTick() - t0) < 600 && n < (int)sizeof(line) - 1) {
+    while ((HAL_GetTick() - t0) < 2000 && n < (int)sizeof(buf) - 1) {
         uint8_t ch;
-        if (RingBuf_Read(&ch)) line[n++] = (char)ch;
-        else                   vTaskDelay(2);
-    }
-    line[n] = 0;
-    char *p = strstr(line, "STAIP,\"");
-    if (p) {
-        p += 7;
-        char *q = strchr(p, '"');
-        if (q && (size_t)(q - p) < sizeof g_esp_ip) {
-            memcpy(g_esp_ip, p, (size_t)(q - p));
-            g_esp_ip[q - p] = 0;
+        if (RingBuf_Read(&ch)) {
+            buf[n++] = (char)ch;
+            buf[n] = 0;
+            if (strstr(buf, "\r\nOK\r\n") || strstr(buf, "ERROR"))
+                break;          /* 应答收完（与 wifi_scan_locked 同款退出条件） */
+        } else {
+            vTaskDelay(2);
         }
     }
+    buf[n] = 0;
+
+    g_esp_ip[0] = '-';
+    g_esp_ip[1] = '-';
+    g_esp_ip[2] = 0;
+    if (ipv4_find_last(buf, (uint16_t)n, g_esp_ip, sizeof g_esp_ip) > 0)
+        dbg_print("[NET] ip %s\r\n", g_esp_ip);
 }
 
 int wifi_join(void)
@@ -244,9 +256,32 @@ static void rx_selfcheck(void)
     Log_Write(LOG_WARN, "uart4 rx DEAD -> rearm");
 }
 
+/* 裸探测一次 AT：OK=确认在 AT 指令模式；模块若行缓冲里有垃圾（或被 +++ 毒过），
+ * 第一发 AT 会把它拼成脏行回 ERROR —— 那条脏行已被这次 AT 消费掉，紧跟着再补
+ * 一发裸 AT 就该答 OK。两发都没 OK 才算"无应答"。 */
+static int at_probe_direct(uint32_t timeout_ms)
+{
+    if (ESP_SendCmd_OK("AT\r\n", timeout_ms) == ESP_OK)
+        return 0;
+    return (ESP_SendCmd_OK("AT\r\n", timeout_ms) == ESP_OK) ? 0 : -1;
+}
+
 static int at_exit_passthrough_impl(void)
 {
-    /* 三次机会，且一次比一次给更长的保护时间。
+    /* ① 先裸探测，绝不先发 +++：
+     *    模块在 AT 指令模式（上电后/自发重启后/从未进过透传）时，+++ 没有终止符，
+     *    会一直挂在模块的行缓冲里；随后的 AT 被拼成 "+++AT" → ERROR —— 每轮重连
+     *    都重演，表现是模块活着、err=0、却永远回 ERROR："no AT mode" 死锁，
+     *    后面真正能救场的 AT+RST 永远走不到（现场：rx=288、err=0、次次 ERROR）。
+     *    只有裸探测无应答 —— 那是透传模式的指纹 —— 才走 +++ 流程。 */
+    RingBuf_Clear();
+    if (at_probe_direct(600) == 0)
+    {
+        RingBuf_Clear();
+        return 0;
+    }
+
+    /* ② 透传退出：三次机会，且一次比一次给更长的保护时间。
      * ESP 只认"+++ 前后各 20ms 都安静"的那种 +++；透传模式下随时可能有下行数据
      * 把 +++ 吞掉，所以先用 wait_line_idle() 等出一个真正的静默窗口再发，
      * 而不是盲等 50ms。 */

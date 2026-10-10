@@ -199,8 +199,8 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 	if(huart==&huart4)
 	{
 		Command_Write(a,Size);		//向缓冲区写入数据
-		
+
 		HAL_UARTEx_ReceiveToIdle_DMA(&huart4,a,sizeof(a));
-		__HAL_DMA_DISABLE_IT(&hdma_uart4_rx,DMA_IT_HT);
+		__HAL_DMA_DISABLE_IT(&hdma_uart4_rx, DMA_IT_HT);
 	}
 }
