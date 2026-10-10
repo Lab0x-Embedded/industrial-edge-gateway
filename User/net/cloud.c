@@ -12,7 +12,6 @@
 #include "FreeRTOS.h"
 #include "tasks.h"
 
-extern uint8_t a[256];
 
 /* ============================================================
  *  云平台 profile —— 两个平台都是"明文 TCP + 标准 MQTT"，

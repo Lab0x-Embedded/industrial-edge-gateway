@@ -76,7 +76,7 @@ void MX_FREERTOS_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-uint8_t a[256];                              /* ESP8266 DMA 接收缓冲（原工程定义于此） */
+uint8_t esp_rx_dma_buf[256];
 
 /* 调试串口（UART5）：只打关键事件，不逐条刷发布 */
 void dbg_print(const char *fmt, ...) {
@@ -136,7 +136,7 @@ int main(void)
   FlashCache_Init();                         /* 定位补传缓存写地址 */
   Clock_Init();                              /* 时间服务：RTC 备份域 / 编译时间定初值 */
   RS485_RX;                                  /* 485 默认接收 */
-  HAL_UARTEx_ReceiveToIdle_DMA(&huart4, a, sizeof(a));   /* ESP8266 DMA 空闲接收 */
+  HAL_UARTEx_ReceiveToIdle_DMA(&huart4, esp_rx_dma_buf, sizeof(esp_rx_dma_buf));   /* ESP8266 DMA 空闲接收 */
   __HAL_DMA_DISABLE_IT(&hdma_uart4_rx, DMA_IT_HT);
   /* USER CODE END 2 */
 

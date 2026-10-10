@@ -19,7 +19,7 @@
 #include <stdlib.h>     /* atoi：解析 CWLAP 应答里的 rssi */
 
 /* UART4(ESP8266) 的 DMA 接收环境：自检/自愈时要重新挂载接收 */
-extern uint8_t a[256];
+extern uint8_t esp_rx_dma_buf[256];
 extern DMA_HandleTypeDef hdma_uart4_rx;
 
 /* —— 凭据存档：W25Q 参数扇区（0xF00000 是触摸校准，相邻互不影响）—— */
@@ -251,7 +251,7 @@ static void rx_selfcheck(void)
         return;
     __HAL_UART_CLEAR_OREFLAG(&huart4);          /* F4 上这一句同时清 PE/FE/NE/ORE */
     huart4.ErrorCode = HAL_UART_ERROR_NONE;
-    HAL_UARTEx_ReceiveToIdle_DMA(&huart4, a, sizeof(a));
+    HAL_UARTEx_ReceiveToIdle_DMA(&huart4, esp_rx_dma_buf, sizeof(esp_rx_dma_buf));
     __HAL_DMA_DISABLE_IT(&hdma_uart4_rx, DMA_IT_HT);
     Log_Write(LOG_WARN, "uart4 rx DEAD -> rearm");
 }

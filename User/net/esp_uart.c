@@ -17,7 +17,7 @@
 #include "tasks.h"
 #include "cmsis_os2.h"
 
-extern uint8_t a[256];
+extern uint8_t esp_rx_dma_buf[256];
 extern DMA_HandleTypeDef hdma_uart4_rx;
 // 循环缓冲区大小
 
@@ -188,7 +188,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 	{
 		__HAL_UART_CLEAR_OREFLAG(huart);      /* F4 上这一句同时清 PE/FE/NE/ORE */
 		huart->ErrorCode = HAL_UART_ERROR_NONE;
-		HAL_UARTEx_ReceiveToIdle_DMA(&huart4, a, sizeof(a));
+		HAL_UARTEx_ReceiveToIdle_DMA(&huart4, esp_rx_dma_buf, sizeof(esp_rx_dma_buf));
 		__HAL_DMA_DISABLE_IT(&hdma_uart4_rx, DMA_IT_HT);
 	}
 }
@@ -198,9 +198,9 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
 	if(huart==&huart4)
 	{
-		Command_Write(a,Size);		//向缓冲区写入数据
+		Command_Write(esp_rx_dma_buf,Size);		//向缓冲区写入数据
 
-		HAL_UARTEx_ReceiveToIdle_DMA(&huart4,a,sizeof(a));
+		HAL_UARTEx_ReceiveToIdle_DMA(&huart4, esp_rx_dma_buf, sizeof(esp_rx_dma_buf));
 		__HAL_DMA_DISABLE_IT(&hdma_uart4_rx, DMA_IT_HT);
 	}
 }
