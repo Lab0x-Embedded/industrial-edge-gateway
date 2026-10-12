@@ -122,6 +122,15 @@ ModDev_t dev_list[] = {
 uint8_t dev_cnt = sizeof(dev_list) / sizeof(ModDev_t);
 #define MAX_ERR_CNT 5   // 连续失败 5 次临时跳过该设备
 
+/* 按从机地址查设备：数据取用不依赖 dev_list 的下标顺序，
+ * 增删/重排设备表不会错位；找不到返回 NULL。 */
+static ModDev_t *ModDev_Find(uint8_t addr)
+{
+    for (uint8_t i = 0; i < dev_cnt; i++)
+        if (dev_list[i].dev_addr == addr) return &dev_list[i];
+    return NULL;
+}
+
 /**
  * @brief 通用 Modbus03 读寄存器   采集数据
  * @param addr: 从机地址  func: 功能码  reg: 起始地址  regcnt: 寄存器数量  buf: 接收缓存
@@ -259,12 +268,14 @@ extern QueueHandle_t lvgl_data_queue;
 void Modbus_Upload_Json(void)
 {
     Data_t uidata;
+    ModDev_t *th = ModDev_Find(0x01);   /* 1#温湿度 */
+    ModDev_t *li = ModDev_Find(0x02);   /* 2#光照 */
 
-    uidata.temp  = dev_list[0].val1;
-    uidata.shi   = dev_list[0].val2;
-    uidata.light = dev_list[1].val1;
-    uidata.valid = (uint8_t)((dev_list[0].valid ? 0x1 : 0) |
-                             (dev_list[1].valid ? 0x2 : 0));
+    uidata.temp  = th ? th->val1 : 0;
+    uidata.shi   = th ? th->val2 : 0;
+    uidata.light = li ? li->val1 : 0;
+    uidata.valid = (uint8_t)((th && th->valid ? 0x1 : 0) |
+                             (li && li->valid ? 0x2 : 0));
     xQueueOverwrite(data_queue, &uidata);
     xQueueOverwrite(lvgl_data_queue, &uidata);   /* UI 离线也要刷新，不再依赖云端在线 */
 }
@@ -273,12 +284,14 @@ void MQTT_SendAllDev_NoWait(void)
 {
     Data_t UIdat;
     char payload[256];
+    ModDev_t *th = ModDev_Find(0x01);   /* 1#温湿度 */
+    ModDev_t *li = ModDev_Find(0x02);   /* 2#光照 */
 
-    UIdat.temp  = dev_list[0].val1;
-    UIdat.shi   = dev_list[0].val2;
-    UIdat.light = dev_list[1].val1;
-    UIdat.valid = (uint8_t)((dev_list[0].valid ? 0x1 : 0) |
-                            (dev_list[1].valid ? 0x2 : 0));
+    UIdat.temp  = th ? th->val1 : 0;
+    UIdat.shi   = th ? th->val2 : 0;
+    UIdat.light = li ? li->val1 : 0;
+    UIdat.valid = (uint8_t)((th && th->valid ? 0x1 : 0) |
+                            (li && li->valid ? 0x2 : 0));
 
     if (UIdat.valid == 0)
         return;   /* 两台设备一次都没读到过：不上报全 0 假数据 */
