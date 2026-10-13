@@ -6,7 +6,7 @@
  *  热点扫描（异步）与 SNTP 校时。与云平台（cloud.c）解耦：
  *  cloud 只管 MQTT，入网只管 WiFi。
  *
- *  ⚠ 并发约定：ESP 串口由 uart1_mutex 独占，且**不可重入**。
+ *  ⚠ 并发约定：ESP 串口由 esp_uart_mutex 独占，且**不可重入**。
  *    - UI 线程只能置"请求标志"，不直接碰串口；
  *    - AT 任务在持锁上下文里调用 *_locked() 版本去真正操作串口。
  *    任何 *_locked() 函数都不得自己再去 xSemaphoreTake，否则死锁。
@@ -46,7 +46,7 @@ int  wifi_conn_save(const char *ssid, const char *pass);          /* 0=已写入
  * 调用时机：仍在 AT 指令模式（未进透传）。 */
 int  wifi_join(void);
 
-/* —— 只能由 AT 任务在持 uart1_mutex 的上下文调用 ——
+/* —— 只能由 AT 任务在持 esp_uart_mutex 的上下文调用 ——
  * wifi_scan_locked：退透传 → AT+CWLAP → 解析去重填 wifi_ap_list →（原在线则）恢复透传；
  *                   返回热点数，负数见上面的失败码。
  * wifi_time_sync_locked：退透传 → CIPSNTPCFG + CIPSNTPTIME? → 解析日期时间并 Clock_SetDateTime；

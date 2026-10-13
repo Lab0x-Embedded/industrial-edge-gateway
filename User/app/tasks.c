@@ -40,7 +40,7 @@ lv_obj_t *main_scr;
  uint8_t fail_count = 0; // 记录连续失败次数
  uint8_t count;
 QueueHandle_t     data_queue;
-SemaphoreHandle_t uart1_mutex;
+SemaphoreHandle_t esp_uart_mutex;
 
 QueueHandle_t lvgl_data_queue;   
 uint32_t last_ping = 0;
@@ -113,7 +113,7 @@ void MQTT(void)
     while (1)
     {
 				 
-		//	xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
+		//	xSemaphoreTake(esp_uart_mutex, portMAX_DELAY);				//获取锁
 			
 			xQueueReceive(data_queue, &data_q,portMAX_DELAY);
 			
@@ -123,7 +123,7 @@ void MQTT(void)
                 char cached[512];
                 uint16_t len;
                 int count = 0;
-xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
+xSemaphoreTake(esp_uart_mutex, portMAX_DELAY);				//获取锁
                 // 补传（读完就销毁，绝对不重复）
 							while (FlashCache_HasData() && count < 5)					//如果读指针落后写指针，说明有数据 返回1
 							{
@@ -154,7 +154,7 @@ xSemaphoreTake(uart1_mutex, portMAX_DELAY);				//获取锁
                // MQTT_SendTempHumi_NoWait(data_q.temp, data_q.shi,data_q.light);
 								HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_RESET);   //D0亮            
 								HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);	  //D1灭		
-								xSemaphoreGive(uart1_mutex);					//释放锁							
+								xSemaphoreGive(esp_uart_mutex);					//释放锁							
 //                xQueueOverwrite(lvgl_data_queue, &data_q);			// 写队列 永远只保留最新一次采集结果，旧值被直接覆盖 该队列长度为1
             }
             else	//断线中
@@ -192,9 +192,9 @@ void AT(void)
 	/* 开机首次连接也必须持锁：MQTT 任务这时可能已经在跑（例如上电后立刻要补传缓存），
 	 * 它会拿同一把锁去读写 UART4 —— 不持锁就是两边抢同一份 AT 应答，
 	 * 结果是"开机随机连不上，非要等下一轮 10s 重连才好"。 */
-	xSemaphoreTake(uart1_mutex, portMAX_DELAY);
+	xSemaphoreTake(esp_uart_mutex, portMAX_DELAY);
 	MQTT_Init();						//连接成功后 g_mqtt_connected为1 否则为0
-	xSemaphoreGive(uart1_mutex);
+	xSemaphoreGive(esp_uart_mutex);
 
     uint8_t heart_fail = 0;  // 心跳连续失败次数
     static uint8_t sntp_tries = 0;   // SNTP 尝试次数（封顶用）
@@ -205,7 +205,7 @@ void AT(void)
                        && !wifi_timesync_request; i++)
             vTaskDelay(1000);
         /* 【自愈】拿锁之前先确认 UART4 接收还挂着。
-         * 这一步不碰串口、不需要 uart1_mutex，所以哪怕本任务马上就要在锁上
+         * 这一步不碰串口、不需要 esp_uart_mutex，所以哪怕本任务马上就要在锁上
          * 等很久，自愈也已经生效了 —— 这正是原设计"只在 escape 失败时自检"
          * 的盲区：那条路径自己也要先拿到锁，AT 任务一被卡住就永远自愈不了。
          * 手册 #22：ORE 打停 RX DMA 后 HAL 不会自动重启，此后板子对模块彻底
@@ -214,7 +214,7 @@ void AT(void)
         if (wifi_rx_selfcheck())
             dbg_print("[NET] uart4 rx rearmed\r\n");
 
-        xSemaphoreTake(uart1_mutex, portMAX_DELAY);	//阻塞获取互斥锁
+        xSemaphoreTake(esp_uart_mutex, portMAX_DELAY);	//阻塞获取互斥锁
 
         /* WiFi 设置页的点名扫描：在持锁的 AT 语境里做（UI 线程只置标志，不阻塞界面）。
          * 只在"退不出透传"（-1）时重试一次 —— 这是最常见的瞬时失败，且这种失败
@@ -314,7 +314,7 @@ void AT(void)
 
         if (wifi_req)
             wifi_reconnect_request = 0;   // 尝试完整结束才清，UI 全程显示 Connecting
-        xSemaphoreGive(uart1_mutex);					//释放锁
+        xSemaphoreGive(esp_uart_mutex);					//释放锁
     }
 }
 

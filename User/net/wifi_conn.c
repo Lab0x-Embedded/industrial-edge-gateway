@@ -215,7 +215,7 @@ int wifi_join(void)
 /* ============================================================
  *  AT 透传进出：扫描 / 校时都要临时退出透传去发 AT 指令
  *  （TCP 连接不断，MQTT 会话无感；离线时无害，重连流程会重建）
- *  调用前提：已持有 uart1_mutex
+ *  调用前提：已持有 esp_uart_mutex
  *
  *  at_exit_passthrough 返回 0=确认已在 AT 指令模式；-1=没应答。
  *  为什么要重试 + 静默期：ESP 在透传模式下要求 "+++" 前后各有 20ms 静默，
@@ -265,7 +265,7 @@ static void rx_selfcheck(void)
  *   PUBLISH/PINGREQ 照发（TX 正常），云平台因此显示设备在线，
  *   而本机永远收不到 PUBACK/PINGRESP，g_cloud_alive_tick 刷不起来，
  *   屏幕就一直 NO CLOUD。原来的自检只挂在 escape 失败路径上，而那条路
- *   本身要先拿到 uart1_mutex —— AT 任务一旦被卡住就永远自愈不了。
+ *   本身要先拿到 esp_uart_mutex —— AT 任务一旦被卡住就永远自愈不了。
  *
  * 返回 1 = 检测到停摆并已重新挂载；0 = 接收正常，无需动作（一次寄存器读）。 */
 int wifi_rx_selfcheck(void)
