@@ -29,7 +29,7 @@ extern "C" {
 #include "main.h"
 
 /* USER CODE BEGIN Includes */
-
+#include "clock.h"   /* CLOCK_BKP_MAGIC：与 app/clock.c 共用的备份域信任标记 */
 /* USER CODE END Includes */
 
 extern RTC_HandleTypeDef hrtc;

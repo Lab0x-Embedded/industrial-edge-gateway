@@ -13,6 +13,15 @@
  * ============================================================ */
 #include <stdint.h>
 
+/* 备份寄存器标记：写在 RTC 备份域 BKP0R 里，标记"RTC 里是校过时写入的成套数据"。
+ * Core/Src/rtc.c 的 MX_RTC_Init 也用它做"保留 RTC 现有时间、跳过默认时间写入"的
+ * 守卫 —— 两边必须同一个值（历史上曾各自定义 "CLKP"/"CLK2" 不一致，守卫永远不
+ * 命中，RTC 全靠 DBP=0 写保护兜底才没被清零）。
+ * 为什么是 v3（"CLK2"）：v1/v2 时代 DBP 从未被打开（见 SetDateTime 里的说明），
+ * RTC 寄存器其实从没被真正写过（里面是备份域默认值 2000-01-01）但魔数却打上了
+ * —— 那种备份一律不认，强制重新校时。 */
+#define CLOCK_BKP_MAGIC  0x324B4C43UL   /* "CLK2"，v3 = DBP 放开后写入的成套数据 */
+
 void    Clock_Init(void);                                  /* 上电调用一次：定初值 */
 /* 校时：日期+时间一起给（SNTP 应答本来就带全量），更新走时 + 写 RTC 日期/时间 + 打备份标记 */
 void    Clock_SetDateTime(uint16_t y, uint8_t mo, uint8_t d,

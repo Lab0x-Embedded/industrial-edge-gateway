@@ -1,17 +1,7 @@
 /* 时间服务实现：单调 tick 走时 + RTC/编译时间定初值 */
-#include "clock.h"
+#include "clock.h"      /* CLOCK_BKP_MAGIC 也供 Core/Src/rtc.c 的守卫共用 */
 #include "rtc.h"
 #include "stm32f4xx.h"
-
-/* 备份寄存器标记：写在 RTC 备份域里，标记"RTC 里是校过时写入的成套数据"。
- * 有 VBAT 电池的板子断电后备份域不丢 → 下次上电看到标记，
- * 说明 RTC 的时间是"断电期间也在走"的，可以拿来当初值；
- * 没电池的板子断电即清零 → 走下面的编译时间分支。
- *
- * 为什么已经是 v3（"CLK2"）：v1/v2 时代 DBP 从未被打开（见 SetDateTime 里的
- * 说明），RTC 的时间/日期寄存器其实从没被真正写过，里面是备份域默认值
- * （2000-01-01），但魔数却打上了 —— 那种备份一律不认，强制重新校时。 */
-#define CLOCK_BKP_MAGIC  0x324B4C43UL   /* "CLK2"，v3 = DBP 放开后写入的成套数据 */
 
 static uint32_t t0_tick;   /* 校时/播种那一刻的 HAL_GetTick() */
 static uint32_t t0_sec;    /* 那一刻的当日秒数 */
