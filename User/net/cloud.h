@@ -45,7 +45,7 @@
 #define ONENET_DEVICE_ID  "humi_temp" // ClientID
 #endif
 #ifndef ONENET_TOKEN
-#define ONENET_TOKEN      "version=2018-10-31&res=products%2FWW0f6843I6%2Fdevices%2Fhumi_temp&et=1823071080&method=sha1&sign=MYFIosMyEEADO2RA9Kf2VefByW4%3D"
+#define ONENET_TOKEN      "version=2018-10-31&res=products%2FWW0f6843I6%2Fdevices%2Fhumi_temp&et=1823165640&method=sha1&sign=2gR1t4pD3vT2wBz%2BzVaF0kCz%2FpU%3D"
 #endif
 
 /* 当前云平台名（关于页显示） */

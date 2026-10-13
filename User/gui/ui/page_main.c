@@ -93,8 +93,8 @@ lv_obj_t *page_main_create(void)
     lv_obj_align(label_status, LV_ALIGN_RIGHT_MID, -8, 0);
 
     /* ---- 双仪表：温度 / 湿度 ----
-     * 量程对应传感器实际范围（温 -10~60℃，湿 0~100%） */
-    arc_temp = make_gauge(scr, -10, 60, C_TEMP, "TEMP C");
+     * 量程对应传感器实际范围（温 -10~100℃，湿 0~100%） */
+    arc_temp = make_gauge(scr, -10, 100, C_TEMP, "TEMP C");
     lv_obj_align(arc_temp, LV_ALIGN_TOP_LEFT, 14, 30);
     label_temp = lv_label_create(arc_temp);
     lv_obj_set_style_text_font(label_temp, &lv_font_montserrat_24, 0);

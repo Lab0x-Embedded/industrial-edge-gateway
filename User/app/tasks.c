@@ -45,6 +45,24 @@ SemaphoreHandle_t uart1_mutex;
 QueueHandle_t lvgl_data_queue;   
 uint32_t last_ping = 0;
 
+/* 最近一次收到云端有效应答的时刻（CONNACK / PUBACK / PINGRESP）。
+ * 定义在此，刷新点在 cloud.c 和下面的 AT 任务；用途见 tasks.h 里
+ * cloud_online_now() 的说明。32 位对齐读写，任务间无需加锁。 */
+volatile uint32_t g_cloud_alive_tick = 0;
+
+
+/* 在线显示的新鲜度窗口：心跳周期 10s，容忍连丢 2 次。
+ * 与"心跳连败 3 次才置离线"同量级 —— 但界面不会再多等那 20 秒。 */
+#define CLOUD_ALIVE_TIMEOUT_MS  25000u
+
+uint8_t cloud_online_now(void)
+{
+    if (!g_mqtt_connected)
+        return 0;
+    return (uint32_t)(xTaskGetTickCount() - g_cloud_alive_tick) <
+           (uint32_t)pdMS_TO_TICKS(CLOUD_ALIVE_TIMEOUT_MS);
+}
+
 extern IWDG_HandleTypeDef hiwdg;
  volatile uint8_t g_mqtt_connected;
 
@@ -151,10 +169,17 @@ if (data_q.valid != 0)   /* 无效数据不进断网缓存，避免重连后补�
 						
            
 						
-        }
+        /* 【必须留在循环体内】原来这里多了一个 '}'，把 while(1) 提前关掉了、
+         * 这句 vTaskDelay 成了死代码 —— 后果不是"刷得快"，而是**锁车队饿死**：
+         * MQTT 任务「放锁 →(几微秒)→ 重新取锁」，同优先级的 AT 任务在锁被放开
+         * 那一刻被唤醒，但要等下一个 tick 才能跑，那时锁已经被抢回去 → 它重新阻塞，
+         * 如此循环，AT 任务可以几分钟一次都跑不到（心跳/判离线/重连全部失效 = 僵尸板）。
+         * 现场实测：UI 看门狗里 at step=4（停在取锁前）+ u1=MQTTTask。
+         * 有这 2 秒窗口，AT 任务每次都能拿到锁。 */
         vTaskDelay(2000);
-    //}
+    }
 }
+
 
 
 /*
@@ -179,12 +204,23 @@ void AT(void)
         for (int i = 0; i < 10 && !wifi_reconnect_request && !wifi_scan_request
                        && !wifi_timesync_request; i++)
             vTaskDelay(1000);
+        /* 【自愈】拿锁之前先确认 UART4 接收还挂着。
+         * 这一步不碰串口、不需要 uart1_mutex，所以哪怕本任务马上就要在锁上
+         * 等很久，自愈也已经生效了 —— 这正是原设计"只在 escape 失败时自检"
+         * 的盲区：那条路径自己也要先拿到锁，AT 任务一被卡住就永远自愈不了。
+         * 手册 #22：ORE 打停 RX DMA 后 HAL 不会自动重启，此后板子对模块彻底
+         * "聋了"，现场表现极具欺骗性 —— 云平台看得到设备在线（PUBLISH 发得出去），
+         * 本机却永远收不到 PUBACK/PINGRESP，屏幕一直 NO CLOUD。 */
+        if (wifi_rx_selfcheck())
+            dbg_print("[NET] uart4 rx rearmed\r\n");
+
         xSemaphoreTake(uart1_mutex, portMAX_DELAY);	//阻塞获取互斥锁
 
         /* WiFi 设置页的点名扫描：在持锁的 AT 语境里做（UI 线程只置标志，不阻塞界面）。
          * 只在"退不出透传"（-1）时重试一次 —— 这是最常见的瞬时失败，且这种失败
          * 本身很便宜（~6s）；而 CWLAP 无应答/报错要占满 12s 窗口，再重试一次就
          * 是 ~36s 独占串口，会把 MQTT 发布和心跳一起挤掉，不如等用户再点一次刷新。 */
+        uint8_t serial_hogged = 0;   /* 本轮是否整段占用了串口（供后面"心跳豁免"用） */
         if (wifi_scan_request)
         {
             wifi_scan_request = 0;
@@ -195,6 +231,7 @@ void AT(void)
                 ap = wifi_scan_locked();
             }
             wifi_scan_state = (ap < 0) ? WIFI_SCAN_FAIL : WIFI_SCAN_DONE;
+            serial_hogged = 1;
         }
 
         /* 设置页"同步当前时间"：手动立即校一次（已校过也允许——重校正是按钮的意义；
@@ -210,6 +247,18 @@ void AT(void)
                 wifi_timesync_result = 2;
                 Log_Write(LOG_WARN, "timesync fail");
             }
+            serial_hogged = 1;
+        }
+
+        /* 扫描 / 校时全程独占串口（退透传 → AT 指令 → 恢复透传），这期间收不到
+         * PINGRESP 是必然的，不该算作心跳失败，也不该扣掉在线新鲜度 ——
+         * 否则用户连点几次刷新，就被自己的扫描"挤"成了离线 + 全量重连。
+         * 豁免是安全的：这两个函数在恢复透传失败（TCP 真断了）时会自己把
+         * g_mqtt_connected 置 0，走不到这里；能走到这里说明链路还是通的。 */
+        if (serial_hogged && g_mqtt_connected)
+        {
+            heart_fail = 0;
+            g_cloud_alive_tick = xTaskGetTickCount();
         }
 
         /* WiFi 设置页请求重连：置离线走 RE 全量重连（新凭据已由 wifi_conn_save 生效）。
@@ -237,12 +286,13 @@ void AT(void)
             MQTT_SendPing();
 
             uint8_t pong[2];
-					int ret = esp_recv_raw(0, pong, 2, pdMS_TO_TICKS(1000));			// 等待 PINGRESP（1 秒超时） 读缓冲区应答
+					int ret = esp_recv_raw(0, pong, 2, pdMS_TO_TICKS(1000));// 等待 PINGRESP（1 秒超时） 读缓冲区应答
 
             if (ret>=2&& pong[0] == 0xD0 && pong[1] == 0x00)
             {
                 // 心跳正常
                 heart_fail = 0;
+                g_cloud_alive_tick = xTaskGetTickCount();   /* 收到 PINGRESP = 链路活着的硬证据 */
             }
             else							// 心跳超时或数据错误
             {
@@ -259,8 +309,9 @@ void AT(void)
         }
 				else
 				{				//重连
-                RE_MQTT_Init();    
+                RE_MQTT_Init();
 				}
+
         if (wifi_req)
             wifi_reconnect_request = 0;   // 尝试完整结束才清，UI 全程显示 Connecting
         xSemaphoreGive(uart1_mutex);					//释放锁
@@ -324,17 +375,23 @@ void UI(void)
             page_main_update_data(disp_data.temp, disp_data.shi,disp_data.light);
         }
 
-        // WiFi/MQTT 状态变更也刷新亮屏
-        if (wifi_connected != last_wifi || g_mqtt_connected != last_status)
+        /* WiFi/MQTT 状态变更也刷新亮屏。
+         * 在线显示走 cloud_online_now()：不是"连接建立过"，而是"最近 25s 收到过
+         * 云端应答"。原来直接看 g_mqtt_connected，链路已断、心跳还没连败 3 次的那
+         * 二十几秒里屏幕会一直显示 ONLINE，而平台侧早判离线 —— 两边对不上，
+         * 就是现场看到的"屏幕说在线、云平台说离线"。 */
+        uint8_t mqtt_online = cloud_online_now();
+        if (wifi_connected != last_wifi || mqtt_online != last_status)
         {
             last_wifi   = wifi_connected;
-            last_status = g_mqtt_connected;
-						page_main_update_status(wifi_connected, g_mqtt_connected);	//更新ui状态显示
-					
-            idle_tick = xTaskGetTickCount();
-            HAL_GPIO_WritePin(LCD_BL_GPIO_Port, LCD_BL_Pin, GPIO_PIN_SET);
-            lcd_bl_en = 1;
-            dbg_print("状态变化亮屏,lcd_bl_en = %d\n", lcd_bl_en);
+            last_status = mqtt_online;
+						page_main_update_status(wifi_connected, mqtt_online);	//更新ui状态显示
+
+            /* 只更新显示，不点亮屏幕：亮屏只认触摸（用户意图）。
+             * cloud_online_now() 的 25s 新鲜度窗口在扫描/校时/重连独占串口、
+             * 链路抖动时会来回翻转——原来"状态变化即亮屏"，无人操作也会
+             * 周期性亮屏（现场："板子一会儿就亮"）。息屏期间的变化由下次
+             * 点亮后的重绘自然呈现。 */
         }
 
 				
@@ -350,7 +407,7 @@ void UI(void)
             page_main_update_clock(hh, mm, ss, synced);   //实时时间（未校时显示暗色）
             page_main_update_date(yr, mo, dd, synced);    //左上角日期（未校时显示 --）
         }
-				
+
         lv_timer_handler();			//5毫秒刷新函数
         vTaskDelay(5);
     }

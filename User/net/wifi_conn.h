@@ -65,6 +65,13 @@ int  wifi_at_escape(void);
 int  wifi_at_passthrough_enter(void);
 int  wifi_at_wait_ready(uint32_t timeout_ms);
 
+/* 接收自愈：UART4 的 RX DMA 掉了吗？掉了就重挂。
+ * 返回 1=检测到停摆并已重挂，0=接收正常。**不含任何 AT 交互、不碰锁**，
+ * 可以在 AT 任务每轮循环开头无条件调用（一次寄存器读）。
+ * 场景：ORE 打停 RX 后板子"发得出去、收不回来"（云平台看得到设备在线，
+ * 本机却永远收不到 PUBACK/PINGRESP）—— 详见手册 #22。 */
+int  wifi_rx_selfcheck(void);
+
 extern volatile uint8_t wifi_connected;       /* 已连上 AP */
 extern char             g_esp_ip[16];         /* AT+CIFSR 结果，"--"=未获取 */
 extern volatile uint8_t wifi_reconnect_request; /* UI 置 1：AT 任务用新凭据全量重连 */
