@@ -1,6 +1,6 @@
 # industrial-edge-gateway（STM32F407ZGT6 移植版）
 
-工业边缘网关（FreeRTOS + LVGL 8.3）：Modbus RTU 从机采集 → RS485、ESP8266 上云 MQTT（E2 / OneNET，profile 切换）、W25Q128 断网缓存与系统日志、看门狗、LVGL 触摸界面。
+工业边缘网关（FreeRTOS + LVGL 8.3）：Modbus RTU 从机采集 → RS485、ESP8266 上云 MQTT（IOTSystem / OneNET，profile 切换）、W25Q128 断网缓存与系统日志、看门狗、LVGL 触摸界面。
 原项目为 STM32F411 + SPI 屏，本工程已完整移植到 **启明欣欣 STM32F407ZGT6 高配版 V4.1 + 2.8 寸 ILI9341 并口屏（XPT2046 触摸）**。
 
 - CubeMX 工程：`industrial-edge-gateway.ioc`（CubeMX 6.18.1 / FW_F4 V1.28.3，工具链 CMake+GCC）
@@ -17,6 +17,54 @@
 4. 根据右下角提示进行配置，通常一路点击"是"即可。烧录时，使用 Debug 模式并创建 `launch.json` 文件。
 
 > 注意：CubeMX 重新生成代码后，核对 `Core/Src/stm32f4xx_it.c` 里的 `TIM4_IRQHandler` 是否还在（HAL 时基，丢失=开机死机）。
+
+## 云端凭据配置（.env）
+
+固件源码不含任何云端密钥：真实凭据写在仓库根目录的 **`.env`**（已被 `.gitignore` 忽略、不入库），CMake 配置时逐行解析并以编译宏注入，覆盖 `User/net/cloud.h` 里的占位默认值。
+
+```bash
+cp .env.example .env   # ① 复制模板
+vim .env               # ② 按下文填写真实凭据（切平台只改 CLOUD_TARGET 一行）
+make                   # ③ 正常构建，配置期自动注入（日志打印每个 KEY 的来源）
+```
+
+没有 `.env` 时使用 cloud.h 的占位值，设备连不上平台（CONNACK 被拒），属预期行为。
+
+### OneNET（默认）
+
+1. 在 [OneNET Studio](https://studio.onenet.net/) 控制台创建产品与设备，记下**产品 ID**、**设备名称**和**设备密钥**。
+2. 打开在线工具 **[OneNET MQTT 参数生成](https://embedkit.ryanuo.cc/zh/tools/onenet-mqtt)**：填入产品 ID、设备名称、设备密钥（Base64），选择签名算法与有效期，即可生成 `version=...&res=...&et=...&method=sha1&sign=...` 格式的鉴权 token。计算全部在浏览器本地完成，密钥不上传服务器。
+3. 填入 `.env`：
+
+```
+CLOUD_TARGET=CLOUD_ONENET
+ONENET_HOST=mqtts.heclouds.com
+ONENET_PRODUCT_ID=<产品ID>     # 即 MQTT username
+ONENET_DEVICE_ID=<设备名称>    # 即 MQTT clientID
+ONENET_TOKEN=<工具生成的 token>
+```
+
+> token 中 `et=` 是过期时间戳，到期后设备全部掉线，需重新生成并更新 `.env`。
+
+### IOTSystem（自建）
+
+开源自建 IoT 设备管理平台（C + libevent + MySQL，自带 MQTT Broker，支持数据采集/告警/设备影子/指令下发），部署与设备注册见 **[Lab0x-Embedded/iotsystem](https://github.com/Lab0x-Embedded/iotsystem)**：
+
+```bash
+git clone https://github.com/Lab0x-Embedded/iotsystem
+cp deploy/config.example.json deploy/config.json    # 填数据库密码
+make db_init && make build && make server           # MQTT 1883 / HTTP 8080
+```
+
+在平台注册产品与设备后，把凭证填入 `.env`（对应 MQTT 认证：username=product_key、password=device_secret）：
+
+```
+CLOUD_TARGET=CLOUD_IOTSYSTEM
+IOTSYSTEM_HOST=<平台地址>           # 如 192.168.0.49（MQTT 端口 1883）
+IOTSYSTEM_PRODUCT_KEY=<product key>
+IOTSYSTEM_DEVICE_ID=<device id>
+IOTSYSTEM_DEVICE_SECRET=<device secret>
+```
 
 ## 目录结构
 
@@ -58,17 +106,10 @@ make reset / make openocd        # 复位 / 起 gdbserver
 - 也可用 STM32CubeProgrammer / Keil / VS Code 调试配置，应用代码都在 USER CODE 区和 User/ 目录，不会丢。
 - 调试串口：**UART5 = PC12(TX)/PD2(RX)，115200**（CH340 USB-TTL），输出联网阶段、日志镜像、OneNET 回执。
 
-## 云平台切换（cloud.h）
+## 上报格式与数据门控
 
-```c
-#define CLOUD_TARGET  CLOUD_E2      /* CLOUD_E2（局域网自建平台，默认）/ CLOUD_ONENET（Studio） */
-```
-
-- **E2**：`E2_HOST / E2_PRODUCT_KEY / E2_DEVICE_ID / E2_DEVICE_SECRET`（设备需先在 E2 注册）
-- **OneNET**：`ONENET_HOST(mqtts.heclouds.com) / ONENET_PRODUCT_ID / ONENET_DEVICE_ID / ONENET_TOKEN`
-  （token 控制台生成，`et=` 是过期时间戳，到期设备全部掉线需重新生成）
-- 上报格式：E2 = `devices/<id>/data` datapoints JSON；OneNET = `$sys/{pid}/{dev}/thing/property/post` 物模型包装格式。
-  **数据有效性门控**：某设备从未成功读到过数据时，其字段不会出现在 payload 里（全 0 假数据不上云、不进断网缓存）。
+- 上报格式：IOTSystem = `devices/<id>/data` datapoints JSON；OneNET = `$sys/{pid}/{dev}/thing/property/post` 物模型包装格式。
+- **数据有效性门控**：某设备从未成功读到过数据时，其字段不会出现在 payload 里（全 0 假数据不上云、不进断网缓存）。
 
 ## 引脚对照（启明欣欣 V4.1）
 

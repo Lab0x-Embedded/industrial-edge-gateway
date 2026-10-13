@@ -13,3 +13,6 @@ CMakePresets.json
 .workbuddy
 .hermes
 
+# 本地云端凭据（模板是 .env.example）
+.env
+

@@ -9,28 +9,33 @@
 #include "tasks.h"     /* Data_t */
 #include <stdarg.h>
 /* ============================================================
- *  云端/连接配置 —— 唯一真值源（改这里，别动 pal.c）
+ *  云端/连接配置 —— 凭据不再写死在源码里
+ *  真值来源：仓库根目录的 .env（已被 .gitignore 忽略，模板
+ *  .env.example）。CMake 配置时解析该文件并以编译宏 -D 注入，
+ *  覆盖下面的占位默认值。找不到 .env 时用占位值（连接会被
+ *  平台拒绝，属预期）。
  * ============================================================ */
-/* 云平台选择：CLOUD_E2 / CLOUD_ONENET
- * 也可以构建时覆盖：-DCLOUD_TARGET=CLOUD_ONENET */
-#define CLOUD_E2      0
-#define CLOUD_ONENET  1
+/* 云平台选择：CLOUD_IOTSYSTEM / CLOUD_ONENET
+ * 优先级：.env 的 CLOUD_TARGET > 下面的默认值 */
+#define CLOUD_IOTSYSTEM 0
+#define CLOUD_ONENET    1
 #ifndef CLOUD_TARGET
-#define CLOUD_TARGET  CLOUD_ONENET
+#define CLOUD_TARGET    CLOUD_ONENET
 #endif
 
-/* E2 平台（CLOUD_TARGET=CLOUD_E2 时生效；设备需先在 E2 注册，凭证必须匹配） */
-#ifndef E2_HOST
-#define E2_HOST          "192.168.0.49"
+/* IOTSystem 平台（自建，CLOUD_TARGET=CLOUD_IOTSYSTEM 时生效；设备需先在 IOTSystem 注册，凭证必须匹配）
+ * 真实值写在 .env，这里只留占位 */
+#ifndef IOTSYSTEM_HOST
+#define IOTSYSTEM_HOST          "set-in-.env"
 #endif
-#ifndef E2_PRODUCT_KEY
-#define E2_PRODUCT_KEY   "factory_sensor"
+#ifndef IOTSYSTEM_PRODUCT_KEY
+#define IOTSYSTEM_PRODUCT_KEY   "set-in-.env"
 #endif
-#ifndef E2_DEVICE_ID
-#define E2_DEVICE_ID     "dev_001"
+#ifndef IOTSYSTEM_DEVICE_ID
+#define IOTSYSTEM_DEVICE_ID     "set-in-.env"
 #endif
-#ifndef E2_DEVICE_SECRET
-#define E2_DEVICE_SECRET "secret_001"
+#ifndef IOTSYSTEM_DEVICE_SECRET
+#define IOTSYSTEM_DEVICE_SECRET "set-in-.env"
 #endif
 
 /* OneNET Studio（CLOUD_TARGET=CLOUD_ONENET 时生效）
@@ -39,18 +44,18 @@
 #define ONENET_HOST       "mqtts.heclouds.com"
 #endif
 #ifndef ONENET_PRODUCT_ID
-#define ONENET_PRODUCT_ID "WW0f6843I6" // Username
+#define ONENET_PRODUCT_ID "set-in-.env" /* Username */
 #endif
 #ifndef ONENET_DEVICE_ID
-#define ONENET_DEVICE_ID  "humi_temp" // ClientID
+#define ONENET_DEVICE_ID  "set-in-.env" /* ClientID */
 #endif
 #ifndef ONENET_TOKEN
-#define ONENET_TOKEN      "version=2018-10-31&res=products%2FWW0f6843I6%2Fdevices%2Fhumi_temp&et=1823165640&method=sha1&sign=2gR1t4pD3vT2wBz%2BzVaF0kCz%2FpU%3D"
+#define ONENET_TOKEN      "set-in-.env"
 #endif
 
 /* 当前云平台名（关于页显示） */
-#if CLOUD_TARGET == CLOUD_E2
-#define CLOUD_PROFILE_NAME  "E2"
+#if CLOUD_TARGET == CLOUD_IOTSYSTEM
+#define CLOUD_PROFILE_NAME  "IOTSystem"
 #else
 #define CLOUD_PROFILE_NAME  "OneNET"
 #endif
@@ -65,7 +70,7 @@ void RE_MQTT_Init(void);
 void MQTT_SendPing(void);
 
 /* 统一云端发布接口：topic/QoS/payload 格式由 CLOUD_TARGET 的 profile 决定。
- * QoS1 平台（E2/OneNET）以收到 PUBACK 为成功依据，返回 0=成功。 */
+ * QoS1 平台（IOTSystem/OneNET）以收到 PUBACK 为成功依据，返回 0=成功。 */
 void cloud_build_payload(char *out, size_t n, const Data_t *d);
 int  cloud_publish(const char *payload);
 

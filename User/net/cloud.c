@@ -16,7 +16,7 @@
 /* ============================================================
  *  云平台 profile —— 两个平台都是"明文 TCP + 标准 MQTT"，
  *  差异全部收敛在这张表里；新增平台 = 加一行表项 + payload 分支。
- *  （OneNET token 在 pal.h 配置，et 过期后需重新生成并替换）
+ *  （OneNET token 在 .env 配置，et 过期后需重新生成并替换）
  * ============================================================ */
 typedef struct {
   const char *host;         /* CIPSTART 目标 */
@@ -34,19 +34,19 @@ typedef struct {
 } CloudProfile;
 
 static const CloudProfile profiles[] = {
-    [CLOUD_E2] =
+    [CLOUD_IOTSYSTEM] =
         {
-            .host = E2_HOST,
+            .host = IOTSYSTEM_HOST,
             .port = 1883,
             .proto_name = "MQTT",
             .proto_level = 4,
             .connect_flags = 0xC2,
-            .client_id = E2_DEVICE_ID,
-            .username = E2_PRODUCT_KEY,
-            .password = E2_DEVICE_SECRET,
+            .client_id = IOTSYSTEM_DEVICE_ID,
+            .username = IOTSYSTEM_PRODUCT_KEY,
+            .password = IOTSYSTEM_DEVICE_SECRET,
             .keepalive = 60,
-            .topic_pub = "devices/" E2_DEVICE_ID "/data",
-            .topic_sub = "cmd/" E2_DEVICE_ID "/exec",
+            .topic_pub = "devices/" IOTSYSTEM_DEVICE_ID "/data",
+            .topic_sub = "cmd/" IOTSYSTEM_DEVICE_ID "/exec",
             .qos1 = 1,
         },
     [CLOUD_ONENET] =
@@ -71,8 +71,8 @@ static const CloudProfile profiles[] = {
 
 /* payload 格式按平台出（键名/信封不同），业务层只给 Data_t */
 void cloud_build_payload(char *out, size_t n, const Data_t *d) {
-#if CLOUD_TARGET == CLOUD_E2
-  /* E2 数据点格式：datapoints[{metric,value}]，metric 需与平台定义一致；
+#if CLOUD_TARGET == CLOUD_IOTSYSTEM
+  /* IOTSystem 数据点格式：datapoints[{metric,value}]，metric 需与平台定义一致；
    * 只上报有效字段（valid 掩码），全 0 假数据不上云 */
   size_t k = (size_t)snprintf(out, n, "{\"datapoints\":[");
   int first = 1;
@@ -114,7 +114,7 @@ void cloud_build_payload(char *out, size_t n, const Data_t *d) {
   if (k < n)
     snprintf(out + k, n - k, "}}");
 #else
-#error "未知 CLOUD_TARGET（见 pal.h：CLOUD_E2 / CLOUD_ONENET）"
+#error "未知 CLOUD_TARGET（见 cloud.h：CLOUD_IOTSYSTEM / CLOUD_ONENET）"
 #endif
 }
 
@@ -438,7 +438,7 @@ static void mqtt_drain_downlink(void) {
 }
 
 /* 统一发布入口：PUBLISH 到 profile 的 topic_pub；
- * QoS1 平台（E2/OneNET）等 PUBACK，收到才返回 0。 */
+ * QoS1 平台（IOTSystem/OneNET）等 PUBACK，收到才返回 0。 */
 int cloud_publish(const char *payload) {
   const CloudProfile *p = &profiles[CLOUD_TARGET];
   uint8_t pkt[512];
