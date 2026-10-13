@@ -44,8 +44,15 @@ void Log_Write(Log_Level level, const char *str)
         str_len = LOG_CONTENT_LEN - 1U;
     memcpy(log_buf.content, str, str_len);
 
-    /* 镜像到调试串口（UART5），与日志页内容一致 */
-    dbg_print("[LOG] ");
+    /* 镜像到调试串口（UART5）：带级别标签，和屏幕日志页的 INFO/WARN/ERROR 三色对应。
+     * 串口是纯文本不上色（也不该上 ANSI 色：现场用 CH340 + 任意终端），
+     * 所以"三色"只存在于屏幕，串口靠这个标签表达同一信息。 */
+    switch (level)
+    {
+        case LOG_WARN:  dbg_print("[LOG][WARN] ");  break;
+        case LOG_ERROR: dbg_print("[LOG][ERROR] "); break;
+        default:        dbg_print("[LOG][INFO] ");  break;
+    }
     dbg_print(str);
     dbg_print("\r\n");
 

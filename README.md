@@ -77,7 +77,7 @@ User/
   net/                 cloud.c（云平台 profile 层：E2/OneNET）、wifi_conn.c（入网/凭据/热点扫描/SNTP 校时）、esp_at.c（AT 驱动）、esp_uart.c（UART4 DMA 接收环形缓冲）
   storage/             w25qxx.c（W25Q128 SPI1 PB3/4/5，CS=PG8 驱动）、log.c（日志 0~4MB）、cache.c（断网补传缓存 4~8MB）
   gui/                 LVGL 8.3（src/）、porting/（显示/触摸移植）、ui/（界面页面 + ui_theme.c 色板/样式 + font_cjk_14.c 中文字体）、lv_conf.h
-ModbusSlave/           从机固件（独立 CMake 工程）：DHT11=PA15、光敏=PF3(ADC3_IN9)、RS485 从机 0x01/0x02
+ModbusSlave/           从机固件（独立 CMake 工程）：DHT11=PG9、光敏=PF7(ADC3_CH5)，RS485 从机 0x01/0x02（SLAVE_TYPE 编译期二选一）
 tools/                 modbus_sim.py（PC 模拟从机）、modbus_master_test.py（PC 当主机直测从机板）
 docs/                  系统架构图（mermaid）、调试排查手册（18 个实战案例）
 Makefile               make build / slave / flash / flash-slave / size ...（封装 CMake preset）
@@ -129,7 +129,7 @@ make reset / make openocd        # 复位 / 起 gdbserver
 
 1. **开机校准**：首次上电（或 W25Q 无校准数据）自动出红十字校准——按左上、右下十字中心各一次；**按住屏幕开机可强制重新校准**（换板/换屏/漂移通用）。校准值存 W25Q 0xF00000，此后免校准。
 2. 屏点亮显示主界面；10 秒无操作息屏，**触摸唤醒**（RS485 插拔本身不点亮，属正常）。
-3. 串口终端（UART5 115200）看联网阶段输出与 `[LOG]` 日志镜像；屏幕"日志"页同内容。
+3. 串口终端（UART5 115200）看联网阶段输出与日志镜像：每行 `[LOG][INFO|WARN|ERROR] 消息`，级别与屏幕日志页的三色一致（串口纯文本不上色）；屏幕"日志"页另带 `T+` 运行时长戳。
 4. 接从机板 RS485（A/A、B/B、共地）：屏幕温湿度/光照 800ms 刷新（DHT11 实测 + 光敏 ADC）；日志出现 `modbus back online`。
 5. WIFI 座插 ESP8266：MQTT 连上后屏幕绿 ONLINE；断网测缓存（日志 WARN）、恢复后自动补传（每轮 ≤5 条）。
 
@@ -140,7 +140,7 @@ make reset / make openocd        # 复位 / 起 gdbserver
 | 主界面 | 中文标题「边缘网关监控」+ WiFi/云状态；温/湿双弧盘仪表；**实时时间 HH:MM:SS** + 运行时长 + 设置入口；光照读数（只有数值，无进度条） |
 | 设置 | WiFi 配置 / 系统运行日志 / 关于设备 |
 | WiFi 配置 | 一行 SSID 输入框（常驻可手输）+「WiFi 列表」按钮 → 点开**全屏模态列表**（进页/超时就自动扫描，扫描在 AT 任务里异步做、界面不卡；列表按信号强度排序、显示 dBm），点某个热点即填入 SSID 并把焦点跳到密码框 |
-| 系统运行日志 | W25Q 日志倒序读取，最新置顶，INFO/WARN/ERROR 三色，时间戳是**运行时长**（`T+` 前缀，不是墙上时间） |
+| 系统运行日志 | W25Q 日志倒序读取，最新置顶，**按级别三色**（INFO 灰白 / WARN 琥珀 / ERROR 浅红，即色板 `C_TEXT` / `C_WARN` / `C_FAIL`），时间戳是**运行时长**（`T+` 前缀，不是墙上时间） |
 | 关于设备 | 固件/板卡/LVGL/Flash/云平台 + IP、运行时长、当前时间（每秒刷新） |
 
 **实时时间从哪来**：走时基于 HAL 时基（HSE 晶振精度，不用漂移大的 LSI）；联网成功后由 ESP8266 SNTP 校一次绝对时间；板上有 VBAT 电池时 RTC 备份域做断电保持。
