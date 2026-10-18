@@ -5,7 +5,7 @@
 #include "main.h"
 #include <stdio.h>
 
-#define sFLASH_ID                       0XEF4017     // W25Q64
+#define sFLASH_ID                       0xEF4018     // W25Q64
 #define SPI_FLASH_PageSize              256
 #define SPI_FLASH_PerWritePageSize      256
 
