@@ -223,20 +223,6 @@ void TIM3_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles TIM4 global interrupt.
-  */
-void TIM4_IRQHandler(void)
-{
-  /* USER CODE BEGIN TIM4_IRQn 0 */
-
-  /* USER CODE END TIM4_IRQn 0 */
-  HAL_TIM_IRQHandler(&htim4);
-  /* USER CODE BEGIN TIM4_IRQn 1 */
-
-  /* USER CODE END TIM4_IRQn 1 */
-}
-
-/**
   * @brief This function handles USART2 global interrupt.
   */
 void USART2_IRQHandler(void)
@@ -279,5 +265,36 @@ void UART5_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+
+/* ============================================================================
+ *  TIM4_IRQHandler —— HAL 时基中断（本工程 HAL_GetTick 的唯一来源）
+ *
+ *  为什么手写在这里（USER CODE 1），而不是用 CubeMX 生成的版本：
+ *
+ *  它是不是"生成代码"，取决于 .ioc 里有没有 NVIC.TIM4_IRQn 这一行。这行
+ *  很容易在改 CubeMX 配置时被删掉 —— 本项目已经发生过两次（切 LSE、重新
+ *  Generate 各一次），每次都悄无声息地把这个函数删没了。
+ *
+ *  一旦没了，符号会落到启动文件里的 .weak 别名 Default_Handler
+ *  （startup_stm32f407xx.s:357），TIM4 中断直接进它的死循环：
+ *      - HAL_TIM_PeriodElapsedCallback 永不调用
+ *      - HAL_IncTick() 永不执行 → HAL_GetTick() 恒为 0
+ *      - app/clock.c 的走时（t0_sec + (HAL_GetTick()-t0_tick)/1000）彻底失效
+ *      - HAL_Delay() 与所有 HAL 超时等待全部死锁
+ *  最要命的是它**编译通过、能烧录、屏幕还亮**（LVGL 靠 TIM3），只有时间
+ *  停在编译时刻不动 —— 典型静默失败。
+ *
+ *  USER CODE 区 + __weak 同时解决两件事：
+ *    1) USER CODE 区 CubeMX 永远保留，不会再被删；
+ *    2) __weak 表示"可被覆盖"：哪天 CubeMX 又生成了强符号版本，链接器优先
+ *       取强符号，不会报重复定义 —— 有生成版/没生成版两种情况都能编过。
+ *
+ *  注意：htim4 定义在 Core/Src/stm32f4xx_hal_timebase_tim.c，由 HAL_InitTick()
+ *  初始化；本文件顶部的 External variables 区已有它的 extern 声明。
+ * ==========================================================================*/
+__weak void TIM4_IRQHandler(void)
+{
+  HAL_TIM_IRQHandler(&htim4);
+}
 
 /* USER CODE END 1 */

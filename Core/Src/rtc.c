@@ -56,9 +56,12 @@ void MX_RTC_Init(void)
   }
 
   /* USER CODE BEGIN Check_RTC_BKUP */
-  /* 备份寄存器标记在位 = 板上有 VBAT 电池、RTC 断电期间一直在走。
-   * 这种情况下绝不能走 CubeMX 默认的"无条件把时间清零"（会毁掉 RTC 时间），
-   * 直接保留 RTC 现有时间，由 app/clock.c 的 Clock_Init() 读走。
+  /* 备份寄存器标记在位 = 备份域保住了内容（有 VBAT 电池时）。
+   * 注意"内容还在"不等于"时间还在走"：只有 RTC 时钟源是 LSE（在备份域）
+   * 时，断电期间时间才继续前进；走 LSI 的话时间停在断电那一刻，由
+   * app/clock.c 的 Clock_Init 用 RTC_UsesLse() 判掉、不当成已校时。
+   * 无论哪种，这里都绝不能走 CubeMX 默认的"无条件把时间清零"（会毁掉
+   * 断电保持的时间），直接保留 RTC 现有值，由 Clock_Init() 读走。
    * 常量取 User/app/clock.h 的 CLOCK_BKP_MAGIC —— 曾经两边各自定义
    * （"CLKP" vs "CLK2"）不一致，守卫永远不命中，RTC 全靠 DBP=0 的写保护
    * 兜底才没被清零；现在统一为单一事实来源。 */
@@ -123,7 +126,7 @@ void HAL_RTC_MspInit(RTC_HandleTypeDef* rtcHandle)
   /** Initializes the peripherals clock
   */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_RTC;
-    PeriphClkInitStruct.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
+    PeriphClkInitStruct.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
     if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
     {
       Error_Handler();
@@ -161,6 +164,15 @@ void HAL_RTC_MspDeInit(RTC_HandleTypeDef* rtcHandle)
 }
 
 /* USER CODE BEGIN 1 */
+
+uint8_t RTC_UsesLse(void)
+{
+    /* RTCSEL[1:0]：00=无时钟，01=LSE，10=LSI，11=HSE。
+     * 只有 LSE 在备份域里 —— 判据是"时钟源能不能在 VDD 掉电后继续供电"，
+     * 不是"这个源准不准"。HSE/128 那种方案精度虽好，但同样在 VDD 域，
+     * 所以这里必须返回 0，调用方才不会把停走的时间当成已校时。 */
+    return (uint8_t)((RCC->BDCR & RCC_BDCR_RTCSEL) == RCC_BDCR_RTCSEL_0);
+}
 
 /* USER CODE END 1 */
 

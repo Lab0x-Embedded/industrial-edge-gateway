@@ -65,6 +65,16 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
+    #
+    # LSE 起振超时。HAL 默认 5000ms（stm32f4xx_hal_conf.h 的
+    # LSE_STARTUP_TIMEOUT），只在 RTC 时钟源切到 LSE 之后才有影响：
+    # 板子上没焊 32.768k 晶振、或晶振受潮/负载电容不匹配时 LSERDY 永远
+    # 等不到，每次上电都要白等满这个超时。500ms 对正常晶振（典型起振
+    # 200~500ms）够用，坏板只等 0.5s 就能降级。
+    # 为什么写在这里而不是改 stm32f4xx_hal_conf.h：那个文件没有 USER CODE
+    # 区，CubeMX 重新生成会整份覆盖；hal_conf 里用的是
+    # `#if !defined(LSE_STARTUP_TIMEOUT)` 守卫，所以 -D 能生效且不被冲掉。
+    LSE_STARTUP_TIMEOUT=500U
 )
 
 # ---- 云端凭据注入：本地 .env > cloud.h 占位默认 ----

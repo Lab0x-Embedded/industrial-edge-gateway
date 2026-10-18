@@ -62,9 +62,24 @@ void Clock_Init(void)
         /* 影子寄存器坑：读完 Time 必须再读一次 Date，否则 RTC 的秒不会更新，
          * 读出来永远是同一个值（见参考手册 RTC 影子寄存器章节）。 */
         HAL_RTC_GetDate(&hrtc, &dt, RTC_FORMAT_BCD);
+
+        /* ★ 魔数在 ≠ 这份时间可信：还要看 RTC 的时钟源在不在备份域。
+         *
+         * 区别在于"断电期间时间有没有继续走"：
+         *   LSE（在备份域）：VDD 断开、VBAT 供电时 RTC 仍在走 → 读回来就是
+         *       现在的真实时间（只差 LSE 自己的 ±20ppm），可以报 synced=1。
+         *   LSI（在 VDD 域）：主电源一断 LSI 就停振。备份域里的时间/日期和
+         *       BKP0R 魔数都还在，但时间停在了**断电那一刻**——断电 3 小时
+         *       后上电，读回来就是 3 小时前的值。这种"看起来是准的、其实
+         *       慢了几小时"的状态最危险，所以一律报 synced=0，让界面显示
+         *       暗色 / 日期 "--"，等 SNTP 校时后再说。
+         *
+         * 历史：早期版本这里无条件写 1，等于把"LSI 停走的时间"当成已校时
+         * 显示成正常颜色——不报错、不崩溃，只是悄悄错几个小时。 */
         clock_seed((uint16_t)(2000U + bcd2bin(dt.Year)), bcd2bin(dt.Month),
                    bcd2bin(dt.Date),
-                   bcd2bin(t.Hours), bcd2bin(t.Minutes), bcd2bin(t.Seconds), 1);
+                   bcd2bin(t.Hours), bcd2bin(t.Minutes), bcd2bin(t.Seconds),
+                   RTC_UsesLse());
         return;
     }
 
