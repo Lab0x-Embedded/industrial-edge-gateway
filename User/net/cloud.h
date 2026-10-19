@@ -61,7 +61,24 @@
 #endif
 
 
-/* 透传模式下从 ESP8266 接收原始 TCP 数据 */
+#include "mqtt_frame.h"
+
+/* 从透传字节流里读一条完整 MQTT 报文（按长度字段对齐，不丢字节）。
+ *
+ * 返回 报文总字节数（>0）；-1 超时没数据；-2 单条报文超过 buf_max。
+ * 无论返回什么，**已消费的字节都已从环形缓冲取走**，调用方必须按 frame
+ * 的类型决定后续动作，不能不处理就继续读下一条。
+ *
+ * 心跳用它而不是裸读 2 字节：缓冲里可能先来一条平台下发的 PUBLISH，
+ * 裸读 2 字节会把它的头部当成 PINGRESP 判定失败（假离线）。 */
+int mqtt_read_frame(uint8_t *buf, uint32_t buf_max,
+                    MqttFrame *out, uint32_t timeout_ms);
+
+/* 透传模式下从 ESP8266 接收原始 TCP 数据。
+ *
+ * 返回**实际读到的字节数**（0..len）；只有参数非法才返回 -1。
+ * ★ 超时也会返回已读到的部分（而不是 -1）——已读字节不允许丢弃，
+ *   否则字节流错位。判断成功请用 `ret == len`，不要用 `ret > 0`。 */
 int esp_recv_raw(int sock, uint8_t *buf, int len, int timeout_ms);
 
 

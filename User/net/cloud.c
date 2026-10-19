@@ -3,6 +3,7 @@
 #include "w25qxx.h"
 #include "esp_uart.h"
 #include "esp_at.h"
+#include "mqtt_frame.h"   /* MQTT 帧解析纯函数（固件与主机测试共用，见 Tools/mqtt_frame_test.c） */
 #include "log.h"
 #include "task.h"
 #include "usart.h"
@@ -382,58 +383,87 @@ void MQTT_SendPing(void) {
   HAL_UART_Transmit(&huart4, ping, 2, 2000);
 }
 
+/* 从透传字节流里读一条完整报文（不定长，按 MQTT 长度字段对齐）。
+ *
+ * ★ 这是整个 MQTT 客户端最容易出错的地方。原则：
+ *   **任何一条报文，要么完整消费，要么一字节都不碰。**
+ *
+ *   旧实现的两个错位 bug（已修）：
+ *     ① 读到头部发现 (hdr>>4) != 0x3 就 `return`，只丢了 1 字节。
+ *        剩下的"长度字段 + body"留在流里 → 下一条从报文中部开始解析 → 全错。
+ *        SUBACK(5B)、PINGRESP、QoS0 PUBLISH 都会触发。
+ *     ② QoS 位不看，无脑跳 2 字节 Packet ID —— QoS0 的下行会把 payload
+ *        前 2 字节吃掉。
+ *
+ *   现在统一走 mqtt_frame.h 的纯函数：先解头算总长，再按总长整段读。
+ *   这两个函数在 PC 上跑过边界用例（Tools/mqtt_frame_test.c）。 */
+int mqtt_read_frame(uint8_t *buf, uint32_t buf_max,
+                           MqttFrame *out, uint32_t timeout_ms)
+{
+  uint32_t got = 0;
+  uint32_t start = HAL_GetTick();
+
+  /* 先攒够固定头 + 剩余长度字段（最多 5 字节） */
+  for (;;) {
+    if (got >= 2) {
+      MqttParseResult r = mqtt_parse_header(buf, got, out);
+      if (r == MQTT_BAD) {
+        /* 长度编码非法：无法知道边界，只能丢 1 字节重新找同步点 */
+        memmove(buf, buf + 1, got - 1);
+        got -= 1;
+        continue;
+      }
+      if (r == MQTT_OK && out->total <= buf_max) break;
+      if (r == MQTT_OK) return -2;   /* 单条报文超过缓冲：放弃（调用方清流） */
+    }
+    if (HAL_GetTick() - start > timeout_ms) return -1;   /* 没数据 */
+    uint8_t ch;
+    if (RingBuf_Read(&ch)) {
+      if (got < buf_max) buf[got++] = ch;
+      else return -2;
+    } else {
+      vTaskDelay(1);
+    }
+  }
+
+  /* 按 total 把 body 读满 */
+  while (got < out->total) {
+    uint8_t ch;
+    if (RingBuf_Read(&ch)) { buf[got++] = ch; }
+    else if (HAL_GetTick() - start > timeout_ms + 500) return -1;
+    else vTaskDelay(1);
+  }
+  return (int)got;
+}
+
 /* 消费一条平台下发/回执的 PUBLISH（保持透传字节流对齐）。
  * OneNET 的属性上报回执带 "code"：0=成功，10411=物模型标识符不存在等；
- * 解析到的 payload 会写进日志页，方便在屏幕上直接看平台回了什么。 */
-static void mqtt_drain_downlink(void) {
-  uint8_t hdr;
-  char pl[96];
-  size_t plen = 0;
+ * 解析到的 payload 会写进日志页，方便在屏幕上直接看平台回了什么。
+ *
+ * 非 PUBLISH 的报文（PUBACK 已在上层读过、SUBACK、PINGRESP 等）也**必须
+ * 整段消费掉**，否则字节流错位——见 mqtt_read_frame 的说明。 */
+static void mqtt_drain_downlink(void)
+{
+  uint8_t buf[300];
+  MqttFrame f;
 
-  if (esp_recv_raw(0, &hdr, 1, 600) != 1)
-    return; /* 超时=本次没有下行 */
-  if ((hdr >> 4) != 0x3)
-    return; /* 不是 PUBLISH，丢弃该字节 */
+  /* 最多排空几条，防止下行洪水时死循环把 MQTT 任务卡住 */
+  for (int guard = 0; guard < 4; guard++) {
+    int n = mqtt_read_frame(buf, sizeof buf, &f, 400);
+    if (n <= 0) return;                       /* 没数据 / 异常：结束 */
 
-  /* remaining length（变长编码，1~4 字节） */
-  uint32_t rem = 0;
-  int mult = 1;
-  for (int i = 0; i < 4; i++) {
-    uint8_t b;
-    if (esp_recv_raw(0, &b, 1, 500) != 1)
-      return;
-    rem += (uint32_t)(b & 0x7F) * mult;
-    mult *= 128;
-    if (!(b & 0x80))
-      break;
-  }
+    if (f.type != MQTT_PKT_PUBLISH)
+      continue;                               /* ← 整段已消费，安全跳过 */
 
-  /* QoS1 下行 body = [tlen2][topic][pid2][payload] */
-  uint8_t body[240];
-  if (rem < 2 || rem > sizeof body) {
-    for (uint32_t i = 0; i < rem; i++) {
-      uint8_t t;
-      esp_recv_raw(0, &t, 1, 10);
+    char pl[96];
+    uint32_t plen = 0;
+    if (mqtt_publish_payload(buf, (uint32_t)n, &f, pl, sizeof pl, &plen) != 0)
+      continue;
+
+    /* 是平台回执（带 code）才写日志，避免刷屏 */
+    if (strstr(pl, "\"code\"") != NULL) {
+      Log_Write(strstr(pl, "\"code\":0") != NULL ? LOG_INFO : LOG_WARN, pl);
     }
-    return;
-  }
-  if (esp_recv_raw(0, body, rem, 500) != (int)rem)
-    return;
-
-  uint16_t tlen = ((uint16_t)body[0] << 8) | body[1];
-  size_t off = 2 + tlen;
-  if (off + 2 > rem)
-    return;
-  off += 2; /* QoS1 Packet ID */
-  plen = rem - off;
-  if (plen > sizeof pl - 1)
-    plen = sizeof pl - 1;
-  memcpy(pl, &body[off], plen);
-  pl[plen] = '\0';
-
-  /* 是平台回执（带 code）才写日志，避免刷屏 */
-  if (strstr(pl, "\"code\"") != NULL) {
-    Log_Write(strstr(pl, "\"code\":0") != NULL ? LOG_INFO : LOG_WARN, pl);
   }
 }
 
@@ -472,9 +502,16 @@ int cloud_publish(const char *payload) {
   HAL_UART_Transmit(&huart4, pkt, (uint16_t)(w - pkt), 5000);
 
   if (p->qos1) {
+    /* 读 PUBACK：用 mqtt_read_frame 而不是裸 esp_recv_raw，
+     * 因为 PUBACK 后面可能紧跟平台下发的 PUBLISH——按长度整段消费才不会错位。
+     *
+     * 这里只接受"恰好一条 PUBACK（4 字节）"：如果收到的是别的报文
+     * （比如先来了一条 SUBACK 或 QoS0 PUBLISH），说明流里还有残留，
+     * 不应该把它的首字节误判成 PUBACK。 */
     uint8_t ack[4];
-    if (esp_recv_raw(0, ack, 4, 2000) != 4 || ack[0] != 0x40) {
-      return -1; /* 未收到 PUBACK */
+    if (esp_recv_raw(0, ack, 4, 2000) != 4 || ack[0] != 0x40 ||
+        ack[1] != 0x02) {
+      return -1; /* 未收到合法 PUBACK */
     }
     /* PUBACK 也是云端应答 = 链路活着的证据。发布期间 AT 任务拿不到锁、
      * 发不出心跳，这条刷新能保证补传/上报密集时不把在线状态误判成离线。 */
@@ -490,21 +527,34 @@ int cloud_publish(const char *payload) {
  * @param  buf        接收缓冲区指针
  * @param  len        期望接收的字节数
  * @param  timeout_ms 超时时间（毫秒）
- * @return 实际接收到的字节数，超时或失败返回 -1
+ * @return 实际接收到的字节数（可能是 0..len）；只有 buf 非法才返回 -1
+ *
+ * ★ 语义变更（修 bug）：旧实现在超时后返回 -1，**但已经读进 buf 的字节
+ *   就被丢弃了**——那些字节已经从环形缓冲里取走，不会再出现。
+ *   调用方看到 -1 只知道"失败"，无法知道"其实读到了几个"，
+ *   于是这部分数据凭空消失 → 字节流从此错位。
+ *
+ *   典型触发：PUBACK 是 4 字节，链路抖动时只到了 3 个，等到超时返回 -1，
+ *   那 3 个字节没了，下一条报文从第 4 个字节开始解析 → 全错。
+ *
+ *   现在改为**返回实际读到的字节数**：超时但读到了部分数据 → 返回 1..len-1，
+ *   调用方（如 mqtt_read_frame）会保留已读字节继续等待，不会丢。
+ *   调用方判断"是否成功"应改用 `ret == len` 而不是 `ret > 0`。
  */
 
 int esp_recv_raw(int sock, uint8_t *buf, int len, int timeout_ms) {
+  (void)sock;
+  if (buf == NULL || len <= 0) return -1;
+
   uint32_t start = HAL_GetTick();
   int received = 0;
   while (received < len) {
-    if (HAL_GetTick() - start > timeout_ms) {
-      return -1;
-    }
     uint8_t ch;
-    while (RingBuf_Read(&ch) && received < len) {
+    while (received < len && RingBuf_Read(&ch)) {
       buf[received++] = ch;
     }
-    // HAL_Delay(1); // 避免CPU空转
+    if (received >= len) break;
+    if ((HAL_GetTick() - start) > (uint32_t)timeout_ms) break;   /* 超时：返回已读的 */
     vTaskDelay(1);
   }
   return received;

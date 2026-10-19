@@ -164,7 +164,19 @@ xSemaphoreTake(esp_uart_mutex, portMAX_DELAY);				//获取锁
                 cloud_build_payload(json, sizeof(json), &data_q);   /* payload 格式随 CLOUD_TARGET */
 							HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
 if (data_q.valid != 0)   /* 无效数据不进断网缓存，避免重连后补传全 0 */
-                    FlashCache_Write(json, strlen(json));
+                {
+                    /* ★ 必须检查返回值：这个函数会因三种原因失败，且都不报错——
+                     *   -1 未初始化（FlashCache_Init 没跑，正常流程不会）
+                     *   -2 JSON 超过条目容量（128-12 = 116 字节）
+                     *   -3 回绕时还有未读数据挡着（宁可丢新数据，不覆盖未发的）
+                     * 历史：IOTSystem 平台「温湿度+光照」三字段 payload 是 121 字节，
+                     * 超过 116，写入失败但返回值被忽略 → 断网补传**全部静默丢失**。
+                     * OneNET 是 103 字节，恰好能存，所以只在一个平台上暴露。 */
+                    int cw = FlashCache_Write(json, strlen(json));
+                    if (cw != 0)
+                        Log_Write(LOG_WARN, (cw == -2) ? "cache: payload too big"
+                                                       : "cache: write failed");
+                }
             }
 						
            
@@ -285,14 +297,51 @@ void AT(void)
             // 发送 PINGREQ
             MQTT_SendPing();
 
-            uint8_t pong[2];
-					int ret = esp_recv_raw(0, pong, 2, pdMS_TO_TICKS(1000));// 等待 PINGRESP（1 秒超时） 读缓冲区应答
+            /* 等 PINGRESP。
+             *
+             * ★ 不能用"裸读 2 字节再比 0xD0 0x00"：缓冲里可能先到一条平台下发的
+             *   PUBLISH（QoS1 属性设置），裸读会把它当成 PINGRESP 判失败 →
+             *   心跳误计数 → 三次后假离线 + 全量重连。
+             *   现在按 MQTT 帧解析：读到的不是 PINGRESP 就先消费掉，
+             *   继续等；期间收到任何合法报文都说明链路是活的。 */
+            uint8_t frbuf[300];
+            MqttFrame fr;
+            int got_pong = 0;
+            int link_alive = 0;
+            uint32_t pong_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(1000);
+            while ((int32_t)(pong_deadline - xTaskGetTickCount()) > 0)
+            {
+                uint32_t remain = (uint32_t)(pong_deadline - xTaskGetTickCount());
+                int n = mqtt_read_frame(frbuf, sizeof(frbuf), &fr, remain);
+                if (n <= 0) break;                    /* 超时 / 异常 */
+                link_alive = 1;                        /* 收到任何完整报文都算链路活 */
+                if (fr.type == MQTT_PKT_PINGRESP) { got_pong = 1; break; }
+                /* 其它报文（PUBLISH/SUBACK 等）已在 mqtt_read_frame 里整段消费，
+                 * 这里直接继续等 PINGRESP —— 不丢字节、不错位。 */
+            }
 
-            if (ret>=2&& pong[0] == 0xD0 && pong[1] == 0x00)
+            if (got_pong)
             {
                 // 心跳正常
                 heart_fail = 0;
                 g_cloud_alive_tick = xTaskGetTickCount();   /* 收到 PINGRESP = 链路活着的硬证据 */
+            }
+            else if (link_alive)
+            {
+                /* 没等到 PINGRESP 但收到了别的报文：链路大概率是好的
+                 * （可能 PINGRESP 还没排到 / 被平台回执挤后）。
+                 * 只刷新新鲜度、不重置 heart_fail 也不累加 —— 避免一次
+                 * 排队延迟就判离线。连续多次拿不到 PINGRESP 仍会累加。 */
+                g_cloud_alive_tick = xTaskGetTickCount();
+                heart_fail++;
+                if (heart_fail >= 3)
+                {
+                    g_mqtt_connected = 0;
+                    Log_Write(LOG_WARN, "MQTT disconnect");
+                    HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
+                    HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_SET);
+                    heart_fail = 0;
+                }
             }
             else							// 心跳超时或数据错误
             {
