@@ -100,17 +100,24 @@ uint16_t CRC_16_MODBUS(uint8_t *data, uint8_t len, uint8_t flag)
     }
     else
     {
-        /* 查表法 */
-        uint8_t CRCL = 0xff;
-        uint8_t CRCH = 0xff;
+        /* 查表法
+         *
+         * 变量命名已对齐 Modbus 官方规范的语义：
+         *   官方示例：index = CRCHi ^ byte;
+         *             CRCHi = CRCLo ^ auchCRCHi[index];
+         *             CRCLo = auchCRCLo[index];
+         *
+         */
+        uint8_t CRCHi = 0xff;
+        uint8_t CRCLo = 0xff;
         uint8_t index = 0;
         while (len--)
         {
-            index = CRCL ^ *data++;
-            CRCL = CRCH ^ auchCRCHi[index];
-            CRCH = auchCRCLo[index];
+            index = CRCHi ^ *data++;
+            CRCHi = CRCLo ^ auchCRCHi[index];
+            CRCLo = auchCRCLo[index];
         }
-        return (CRCH << 8) | CRCL;
+        return (CRCLo << 8) | CRCHi;
     }
 }
 
