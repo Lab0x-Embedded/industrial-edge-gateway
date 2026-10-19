@@ -114,6 +114,26 @@ int main(void)
 
   /* USER CODE BEGIN Init */
 
+  /* ★ 复位原因捕获 —— 必须放在这里，两个"必须"：
+   *   ① 必须在 HAL_Init() **之后**：HAL_Init() 内部会调 HAL_MspInit，
+   *      而真正清标志的是下面那句 __HAL_RCC_CLEAR_RESET_FLAGS()；
+   *      更早读也是可以的，但放在 HAL_Init 之后能确保 RCC 已可用。
+   *   ② 必须在 LOG 初始化**之前**读、在 Log_Init() **之后**写：
+   *      此刻 Log_Init() 还没跑（它在 USER CODE 2 里），直接 Log_Write
+   *      会写进未初始化的日志区，所以先存进一个变量中转。
+   *
+   * 为什么需要它：看门狗复位和上电复位在现象上完全一样（都是"设备重启了"），
+   * 没有这一行就永远不知道现场到底是被狗咬的还是掉电。日志页里能看到
+   * "reset by IWDG" 和 "power-on reset" 的区别，是排查"莫名重启"的第一条线索。
+   *
+   * 注意读的顺序：POR/PIN/BOR 这些标志是"累积"的，不清除会一直置位；
+   * 所以先把关心的都读出来，再统一清一次。 */
+  uint8_t rst_iwdg = (__HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST) != RESET) ? 1U : 0U;
+  uint8_t rst_por  = (__HAL_RCC_GET_FLAG(RCC_FLAG_PORRST)  != RESET) ? 1U : 0U;
+  uint8_t rst_pin  = (__HAL_RCC_GET_FLAG(RCC_FLAG_PINRST)  != RESET) ? 1U : 0U;
+  uint8_t rst_soft = (__HAL_RCC_GET_FLAG(RCC_FLAG_SFTRST)  != RESET) ? 1U : 0U;
+  __HAL_RCC_CLEAR_RESET_FLAGS();
+
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -139,6 +159,15 @@ int main(void)
   SPI_FLASH_Init();                          /* W25Q128: SPI1 + CS(PG8) */
   HAL_TIM_Base_Start_IT(&htim3);             /* TIM3 1ms: LVGL 心跳 */
   Log_Init();
+  /* Log 已就绪，把上面在 Init 区捕获的复位原因落盘。放在这里而不是更早，
+   * 是因为 Log_Init() 之前写日志会落到未初始化的区域。
+   * 只记一条汇总：优先级 IWDG > 掉电 > 外部复位 > 软复位。
+   * 为什么 IWDG 优先——它才是需要行动的那一条（说明有东西卡住了）；
+   * 其余三种是正常的上电/按键复位，不需要告警。 */
+  if (rst_iwdg)      Log_Write(LOG_WARN,  "reset by IWDG");
+  else if (rst_por)  Log_Write(LOG_INFO,  "reset by power-on");
+  else if (rst_pin)  Log_Write(LOG_INFO,  "reset by external pin");
+  else if (rst_soft) Log_Write(LOG_INFO,  "reset by software");
   FlashCache_Init();                         /* 定位补传缓存写地址 */
   Clock_Init();                              /* 时间服务：RTC 备份域 / 编译时间定初值 */
   RS485_RX;                                  /* 485 默认接收 */

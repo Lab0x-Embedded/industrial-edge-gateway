@@ -5,6 +5,7 @@
 #include "touch.h"
 #include "main.h"
 #include "w25qxx.h"
+#include "log.h"        /* Log_Write：校准超时/成功/无效 落盘（内有 flash_mutex 保护） */
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -92,14 +93,88 @@ void TP_Init(void)
 static uint16_t cal_y_tl, cal_x_tl, cal_y_br, cal_x_br; /* 十字处的原始读数 */
 static uint8_t  tp_calibrated = 0;
 
-/* 等一次按压，取 16 次读数平均；sx=rawY, sy=rawX（调用方按交换语义使用） */
-static void TP_WaitSample(uint16_t *sy, uint16_t *sx)
+/* 等一次按压，取 16 次读数平均；sx=rawY, sy=rawX（调用方按交换语义使用）
+ *
+ * 返回 0=采到有效读数，-1=超时或读数无效。
+ *
+ * ★ 为什么必须带超时：
+ *   原实现是 `while (TP_PEN() == GPIO_PIN_SET) vTaskDelay(10);` —— **无限等**。
+ *   触发条件是真实存在的：新板首次烧录、Flash 坏块、校准校验失败（魔数/累加和
+ *   对不上）时都会走到这里，若现场没人碰屏幕，UI 任务就永远停在开机校准界面：
+ *   屏幕全白、主界面出不来、设置页也进不去。
+ *
+ *   更微妙的是它与看门狗的耦合：当前 Dog_task 是"无条件喂狗"，所以系统不会
+ *   被复位，表现为"设备卡在白屏"；一旦哪天把喂狗改成心跳汇聚（各任务报活），
+ *   这里就立刻变成"20 秒复位一次"的死循环。所以超时必须先加。
+ *
+ * 两个等待（等按下 / 等松开）都设了 deadline：
+ *   等按下超时 → 失败（没人操作）
+ *   等松开超时 → 也失败（一直按住不放属于异常操作；若放行，第二个十字会在
+ *                "手指还没抬起"的状态下立刻通过，采到的是错误位置的数据）
+ *
+ * 关于"按住开机后第一个十字按不进去"的修复见 TP_WaitSample 内的详细说明：
+ * 进入采样前**必须先清掉残留按压**（等抬手→等新按下），而不是简单判断
+ * "PEN 当前是否为低"——后者会把开机长按当成一次校准点击。 */
+#define TP_CAL_TIMEOUT_MS   30000U   /* 每个十字 30s 无有效操作即放弃校准 */
+#define TP_CAL_RELEASE_MS    5000U   /* 开机长按后等抬手；超时视为 PEN 卡死 */
+
+/* 等 PEN 抬起。返回 0=已抬起，-1=超时仍在按。
+ * 单独抽出来的原因：它和"等按下"是两种不同的语义，混在一个循环里
+ * 容易漏掉"必须先抬起、再按下"这个先后关系（下面 TP_WaitSample 里的坑）。 */
+static int TP_WaitRelease(TickType_t timeout_ticks)
+{
+    TickType_t deadline = xTaskGetTickCount() + timeout_ticks;
+    while (TP_PEN() == GPIO_PIN_RESET)
+    {
+        if ((int32_t)(xTaskGetTickCount() - deadline) >= 0) return -1;
+        vTaskDelay(10);
+    }
+    return 0;
+}
+
+/* 注意 timeout 参数的单位是 **tick**，不是 ms。
+ * 这样调用方（TP_SampleWithRetry）算出的剩余预算可以直接传进来，
+ * 避免"tick → ms → tick"的来回换算：当前 configTICK_RATE_HZ=1000 时
+ * pdMS_TO_TICKS 是恒等映射、换算也不会错，但换个 tick 频率就会静默偏掉。 */
+static int TP_WaitSample(uint16_t *sy, uint16_t *sx, TickType_t timeout_ticks)
 {
     uint32_t ax = 0, ay = 0;
     uint8_t n = 0;
 
-    while (TP_PEN() == GPIO_PIN_SET)           /* 等按下 */
+    /* 用有符号差值比较，天然处理 tick 回绕（同 clock.c 里 HAL_GetTick 的思路） */
+    TickType_t deadline = xTaskGetTickCount() + timeout_ticks;
+
+    /* ★ 必须先等手指抬起，再等"新的按下"。
+     *
+     * 这是"按住开机重校"与"第一个十字"之间的接缝 bug：
+     *   用户按住屏幕开机 → 500ms 检测窗口通过 → 进入校准 → 画左上十字。
+     *   此时手指**往往还没松**，PEN 仍是低电平。若"等按下"循环直接放行
+     *   （因为它只检查 PEN 是否为低），就会立刻进入采样，采到的是
+     *   "用户按住开机的那个位置"（通常不在十字中心）。
+     *   结果：十字刚出现就被擦掉 → 用户感觉"根本点不到"，
+     *        而且 cal_tl 存的是错误坐标 → 整份校准作废。
+     *
+     * 所以这里要求一次完整的"抬起 → 按下"边沿，而不是"当前是低电平"。
+     * 副作用：十字 2 之前手指本来就是抬起的，这一圈会立刻通过，无额外延迟。 */
+    while (TP_PEN() == GPIO_PIN_RESET)         /* 清掉残留按压 */
+    {
+        if ((int32_t)(xTaskGetTickCount() - deadline) >= 0)
+        {
+            *sx = 0; *sy = 0;
+            return -1;
+        }
         vTaskDelay(10);
+    }
+
+    while (TP_PEN() == GPIO_PIN_SET)           /* 等一次新的按下 */
+    {
+        if ((int32_t)(xTaskGetTickCount() - deadline) >= 0)
+        {
+            *sx = 0; *sy = 0;
+            return -1;
+        }
+        vTaskDelay(10);
+    }
     vTaskDelay(20);                            /* 膜形变稳定 */
 
     while (n < 16 && TP_PEN() == GPIO_PIN_RESET)
@@ -109,11 +184,53 @@ static void TP_WaitSample(uint16_t *sy, uint16_t *sx)
         if (rx > 50 && ry > 50) { ax += rx; ay += ry; n++; }
         vTaskDelay(5);
     }
-    if (n > 0) { *sx = ax / n; *sy = ay / n; }
-    else       { *sx = 0;      *sy = 0; }
 
-    while (TP_PEN() == GPIO_PIN_RESET)         /* 等松开，防止连采 */
-        vTaskDelay(10);
+    /* 等松开，防止连采。
+     * 这里**不再用剩余的完整预算**（原来传 timeout_ticks，最坏可到 30s），
+     * 而是单独收窄到 TP_CAL_RELEASE_MS：
+     *   - 数据已经采完了，"按久了"不影响精度（采样只发生在按下后的前 ~80ms）；
+     *   - 但若用户一直按着不放，用 30s 去等会让"这一次十字"看起来像卡死，
+     *     而且把下一步的预算也耗光，第二个十字直接超时 —— 正是用户遇到的
+     *     "按久了就点不到、校准结束"的一部分原因。
+     * 收窄后：正常松手（几十~几百 ms）完全够；真按住不放则 5s 判失败，
+     * 由 TP_SampleWithRetry 在外层重试，整轮 30s 预算仍然有效。 */
+    if (TP_WaitRelease(pdMS_TO_TICKS(TP_CAL_RELEASE_MS)) != 0)
+    {
+        *sx = 0; *sy = 0;
+        return -1;                             /* 按住不放：本次作废，外层重试 */
+    }
+
+    if (n == 0)
+    {
+        *sx = 0; *sy = 0;
+        return -1;                             /* 有按压但读数全无效（<50），同样算失败 */
+    }
+
+    *sx = ax / n;
+    *sy = ay / n;
+    return 0;
+}
+
+/* 采一次按压，失败（超时/读数全无效）时重试；最迟 TP_CAL_TIMEOUT_MS 放弃。
+ *
+ * 为什么还要重试：原实现的 `do { TP_WaitSample(); } while (sx1 == 0);`
+ * 语义是"这次没采到有效值就再来一次"，常见于用户按得太轻/太快（PEN 已抬起
+ * 但 16 次采样里没有一个 >50）。这层重试要保留——否则正常用户的一次误触
+ * 就会导致整个校准被放弃。
+ *
+ * 但它必须是"有总量上限的重试"，不能是原来的无限 do-while。 */
+static int TP_SampleWithRetry(uint16_t *sy, uint16_t *sx)
+{
+    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(TP_CAL_TIMEOUT_MS);
+
+    for (;;)
+    {
+        uint32_t remain = (uint32_t)(deadline - xTaskGetTickCount());
+        if ((int32_t)remain <= 0) return -1;      /* 总预算用完 */
+
+        if (TP_WaitSample(sy, sx, remain) == 0) return 0;
+        /* 本次失败但还在预算内 → 继续等下一次按压 */
+    }
 }
 
 static void TP_DrawCross(uint16_t cx, uint16_t cy, uint16_t color)
@@ -176,12 +293,49 @@ void TP_Do_Calibration(void)
             if (TP_TryLoadCal()) return;        /* Flash 里有有效校准，免校准开机 */
     }
 
+    /* ★ 先等用户抬手，再画十字 —— 让"十字出现"本身就等于"现在可以按"。
+     *
+     * 为什么有这个顺序：走到这里只有两种可能
+     *   a) 用户按住屏幕开机（hold≥30 强制重校）——手指此刻往往还按着；
+     *   b) Flash 里没有有效校准 —— 用户可能刚点过屏幕。
+     * 两种情况的共同点是 PEN 可能已经是低电平。若先画十字再采样，
+     * "等按下"会立刻放行，十字刚出现就被这次残留按压消费掉并擦除，
+     * 用户看到的就是"十字一闪而过、根本点不到"，而 cal_tl 还会被写成
+     * 那个残留按压的坐标 —— 校准错误但流程"成功"，最难查的一类。
+     *
+     * 放在这里而不是塞进 TP_WaitSample 的原因：TP_WaitSample 里等完再画，
+     * 十字已经显示在屏幕上了，用户看着十字却按不进去，体验照样是坏的。
+     * 先抬手、再画十字，用户看到的第一个十字就一定是可按状态。 */
+    if (TP_WaitRelease(pdMS_TO_TICKS(TP_CAL_RELEASE_MS)) != 0)
+    {
+        /* 5s 还没抬手：要么用户一直按着，要么 PEN 线卡死（硬件问题）。
+         * 不能在这里继续，否则采样会拿到按住位置的错误坐标。 */
+        Log_Write(LOG_WARN, "touch cal PEN stuck low");
+        LCD_Clear(0xFFFF);
+        return;
+    }
+
     TP_DrawCross(CAL_CX1, CAL_CY1, 0xF800);
-    do { TP_WaitSample(&sy1, &sx1); } while (sx1 == 0);
+    if (TP_SampleWithRetry(&sy1, &sx1) != 0)
+    {
+        /* 左上十字 30s 内没采到 → 放弃校准，直接返回。
+         * 这里**不能死等**：UI 任务卡在这里会导致屏幕永久停在白屏，
+         * 主界面、设置页都出不来，设备看起来就是"开不了机"。
+         * 放弃后走 TP_Get_Calibrated 里的"未校准兜底映射"（线性近似，
+         * 精度差但能点亮触摸），用户可按住开机重校。 */
+        Log_Write(LOG_WARN, "touch cal timeout TL");
+        LCD_Clear(0xFFFF);
+        return;
+    }
 
     TP_DrawCross(CAL_CX1, CAL_CY1, 0xFFFF);    /* 擦掉左上 */
     TP_DrawCross(CAL_CX2, CAL_CY2, 0xF800);
-    do { TP_WaitSample(&sy2, &sx2); } while (sx2 == 0);
+    if (TP_SampleWithRetry(&sy2, &sx2) != 0)
+    {
+        Log_Write(LOG_WARN, "touch cal timeout BR");
+        LCD_Clear(0xFFFF);
+        return;
+    }
 
     if (sy1 != sy2 && sx1 != sx2)
     {
@@ -189,6 +343,13 @@ void TP_Do_Calibration(void)
         cal_y_br = sy2;  cal_x_br = sx2;
         tp_calibrated = 1;
         TP_SaveCal();
+        Log_Write(LOG_INFO, "touch calibrated");
+    }
+    else
+    {
+        /* 两次读数相同 → 大概率是同一个位置按了两次，不能当校准用
+         * （否则除零或映射塌缩）。保持 tp_calibrated=0，走兜底映射。 */
+        Log_Write(LOG_WARN, "touch cal invalid");
     }
     LCD_Clear(0xFFFF);
 }
