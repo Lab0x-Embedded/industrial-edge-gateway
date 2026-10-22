@@ -159,6 +159,7 @@ uint8_t Modbus_Read_Dev(uint8_t addr, uint8_t func, uint16_t reg, uint16_t regcn
     tx[5] = regcnt & 0xFF;
 
     crc = CRC_16_MODBUS(tx, 6, 0);
+    /* Modbus RTU：CRC 低字节先发，高字节后发 */
     tx[6] = crc & 0xFF;
     tx[7] = (crc >> 8) & 0xFF;
 
