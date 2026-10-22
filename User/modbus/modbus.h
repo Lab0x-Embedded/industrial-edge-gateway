@@ -39,7 +39,4 @@ void Modbus_Poll_AllDev(void);
 void Modbus_Upload_Json(void);
 void MQTT_SendAllDev_NoWait(void);
 
-/* 兼容旧接口（建议废弃，改用 Modbus_Read_Dev） */
-int Modbus_Get_Temp(float *temp, float *shi);
-
 #endif /* MODBUS_H */
