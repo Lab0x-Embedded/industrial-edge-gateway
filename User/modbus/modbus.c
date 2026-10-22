@@ -117,7 +117,7 @@ uint16_t CRC_16_MODBUS(uint8_t *data, uint8_t len, uint8_t flag)
             CRCHi = CRCLo ^ auchCRCHi[index];
             CRCLo = auchCRCLo[index];
         }
-        return (CRCLo << 8) | CRCHi;
+        return (CRCHi << 8) | CRCLo;
     }
 }
 
