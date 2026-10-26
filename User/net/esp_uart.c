@@ -50,24 +50,6 @@ void RingBuf_Clear(void)
     readIndex = writeIndex;
 }
 
-/**
-* @brief 增加读索引
-* @param length 要增加的长度
-*/
-void Command_AddReadIndex(uint8_t length) {
-    readIndex += length;
-    readIndex %= BUFFER_SIZE;
-}
-
-/**
-* @brief 读取第i位数据 超过缓存区长度自动循环
-* @param i 要读取的数据索引
-*/
-
-uint8_t Command_Read(uint16_t i) {
-    return buffer[i % BUFFER_SIZE];
-}
-
 /*获取read下标对应的数据*/
 uint8_t RingBuf_Read(uint8_t *out) {
     if (readIndex == writeIndex) {
@@ -152,25 +134,6 @@ uint16_t Command_Write(uint8_t *data, uint16_t len)
 
 
 
-
-extern uint8_t screen_off_flag;
-/**
-* @brief 从缓冲区读取所有未处理的数据（不解析指令帧）
-* @param command 存储读取数据的指针
-* @return 实际读取的字节数（0 表示缓冲区为空）
-*/
-uint16_t Command_GetCommand(uint8_t *command) {
-    uint16_t len = Command_GetLength();  // 获取当前未处理的数据长度
-    if (len == 0) {
-        return 0;
-    }
-    // 顺序读取 len 个字节到 command 中
-    for (uint16_t i = 0; i < len; i++) {
-        command[i] = Command_Read(readIndex + i);
-    }
-    Command_AddReadIndex(len);  // 移动读索引，表示这些数据已被消费
-    return len;
-}
 
 extern TickType_t idle_tick;
 extern uint8_t lcd_bl_en ; //1亮屏 0熄屏

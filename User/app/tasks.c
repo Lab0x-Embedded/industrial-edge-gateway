@@ -69,17 +69,6 @@ extern IWDG_HandleTypeDef hiwdg;
 // ==============================================
 // Modbus 采集
 // ==============================================
-//void Modbus(void)
-//{
-//    Data_t data;				//结构体变量
-
-//    while(1)
-//    {
-//        Modbus_Get_Temp(&data.temp, &data.shi);		//采集温湿度            
-//				xQueueOverwrite(data_queue, &data);					// 永远只保留最新一次采集结果，旧值被直接覆盖 该队列长度为1
-//        vTaskDelay(500);
-//    }
-//}
 
 void Modbus(void)
 {
@@ -113,7 +102,6 @@ void MQTT(void)
     while (1)
     {
 				 
-		//	xSemaphoreTake(esp_uart_mutex, portMAX_DELAY);				//获取锁
 			
 			xQueueReceive(data_queue, &data_q,portMAX_DELAY);
 			
@@ -151,11 +139,9 @@ xSemaphoreTake(esp_uart_mutex, portMAX_DELAY);				//获取锁
 
 							// 发实时数据 并且给ui写队列 （从数组里获取数据）
 								MQTT_SendAllDev_NoWait();
-               // MQTT_SendTempHumi_NoWait(data_q.temp, data_q.shi,data_q.light);
 								HAL_GPIO_WritePin(LED0_GPIO_Port, LED0_Pin, GPIO_PIN_RESET);   //D0亮            
 								HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);	  //D1灭		
 								xSemaphoreGive(esp_uart_mutex);					//释放锁							
-//                xQueueOverwrite(lvgl_data_queue, &data_q);			// 写队列 永远只保留最新一次采集结果，旧值被直接覆盖 该队列长度为1
             }
             else	//断线中
             {

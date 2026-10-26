@@ -196,18 +196,6 @@ void my_clear(void)
     read_addr  = CACHE_START_ADDR;
 }
 
-void FlashCache_Clear(void)
-{
-    if (flash_mutex) xSemaphoreTake(flash_mutex, portMAX_DELAY);
-    for (uint32_t addr = CACHE_START_ADDR; addr < CACHE_END_ADDR; addr += CACHE_SECTOR_SIZE) {
-        SPI_FLASH_SectorErase(addr);
-    }
-    write_addr = CACHE_START_ADDR;
-    read_addr  = CACHE_START_ADDR;
-    initialized = 1;
-    if (flash_mutex) xSemaphoreGive(flash_mutex);
-}
-
 /* 补传发送封装：组包/topic/QoS 由云平台 profile 层（cloud.c）处理；
  * QoS1 平台以收到 PUBACK 为成功，失败返回非 0（调用方不标记已发，下轮重试） */
 int MQTT_PublishJson(const char *json)

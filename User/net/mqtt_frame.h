@@ -87,15 +87,6 @@ static inline MqttParseResult mqtt_parse_header(const uint8_t *buf, uint32_t len
     return MQTT_OK;
 }
 
-/* 判断一条已解析的帧"是否可以整条跳过"（不关心内容时用）。
- * 供上层：遇到不认识/不关心的报文，按 frame->total 整段丢弃，保持流对齐。 */
-static inline int mqtt_frame_total(const MqttFrame *f, uint32_t *total)
-{
-    if (f == NULL || total == NULL) return 0;
-    *total = f->total;
-    return 1;
-}
-
 /* 从一条完整的 PUBLISH 帧里取出 payload（QoS1 会跳过 Packet ID）。
  *
  * 入参 buf 指向报文起始，len 应为 frame->total（至少 >= hdr_len + remaining）。

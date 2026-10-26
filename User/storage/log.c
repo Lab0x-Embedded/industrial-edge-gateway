@@ -86,16 +86,3 @@ uint8_t Log_ReadOne(uint32_t log_offset, Log_Obj *log_obj)
 
     return (log_obj->magic != LOG_MAGIC);   /* 魔数不匹配 = 无效日志 */
 }
-
-void Log_EraseAll(void)
-{
-    uint32_t sec_addr;
-    if (flash_mutex) xSemaphoreTake(flash_mutex, portMAX_DELAY);
-    for (sec_addr = LOG_PART_ADDR; sec_addr < LOG_PART_ADDR + LOG_PART_SIZE; sec_addr += 4096)
-    {
-        SPI_FLASH_SectorErase(sec_addr);
-        SPI_FLASH_WaitForWriteEnd();
-    }
-    if (flash_mutex) xSemaphoreGive(flash_mutex);
-    log_write_offset = 0;
-}

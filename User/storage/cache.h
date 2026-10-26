@@ -41,7 +41,6 @@ int  FlashCache_Write(const char *json, uint16_t len);
 int  FlashCache_Read(char *json, uint16_t *len);  /* 读一条（不消费） */
 int  FlashCache_HasData(void);
 void FlashCache_MarkSent(void);                   /* 补传成功后标记该条已发 */
-void FlashCache_Clear(void);
 void my_clear(void);                              /* 指针复位（不擦除） */
 
 int  MQTT_PublishJson(const char *json);          /* 补传发送封装：失败不标记，下轮重试 */

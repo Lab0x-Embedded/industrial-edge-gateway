@@ -49,17 +49,6 @@ void SPI_FLASH_SectorErase(uint32_t SectorAddr)
   SPI_FLASH_WaitForWriteEnd();
 }
 
-void SPI_FLASH_BulkErase(void)
-{
-  SPI_FLASH_WriteEnable();
-
-  SPI_FLASH_CS_LOW();
-  SPI_FLASH_SendByte(W25X_ChipErase);
-  SPI_FLASH_CS_HIGH();
-
-  SPI_FLASH_WaitForWriteEnd();
-}
-
 //单页写入（一页 256 字节）
 void SPI_FLASH_PageWrite(uint8_t* pBuffer, uint32_t WriteAddr, uint16_t NumByteToWrite)
 {
@@ -205,33 +194,6 @@ uint32_t SPI_FLASH_ReadID(void)
   return Temp;
 }
 
-uint32_t SPI_FLASH_ReadDeviceID(void)
-{
-  uint32_t Temp = 0;
-  SPI_FLASH_CS_LOW();
-  SPI_FLASH_SendByte(W25X_DeviceID);
-  SPI_FLASH_SendByte(Dummy_Byte);
-  SPI_FLASH_SendByte(Dummy_Byte);
-  SPI_FLASH_SendByte(Dummy_Byte);
-  Temp = SPI_FLASH_SendByte(Dummy_Byte);
-  SPI_FLASH_CS_HIGH();
-  return Temp;
-}
-
-void SPI_FLASH_StartReadSequence(uint32_t ReadAddr)
-{
-  SPI_FLASH_CS_LOW();
-  SPI_FLASH_SendByte(W25X_ReadData);
-  SPI_FLASH_SendByte((ReadAddr & 0xFF0000) >> 16);
-  SPI_FLASH_SendByte((ReadAddr& 0xFF00) >> 8);
-  SPI_FLASH_SendByte(ReadAddr & 0xFF);
-}
-
-uint8_t SPI_FLASH_ReadByte(void)
-{
-  return SPI_FLASH_SendByte(Dummy_Byte);
-}
-
 uint8_t SPI_FLASH_SendByte(uint8_t byte)
 {
   SPITimeout = SPIT_FLAG_TIMEOUT;
@@ -246,25 +208,6 @@ uint8_t SPI_FLASH_SendByte(uint8_t byte)
   while (__HAL_SPI_GET_FLAG(&SpiHandle, SPI_FLAG_RXNE) == RESET)
   {
     if((SPITimeout--) == 0) return SPI_TIMEOUT_UserCallback(1);
-  }
-
-  return READ_REG(SpiHandle.Instance->DR);
-}
-
-uint16_t SPI_FLASH_SendHalfWord(uint16_t HalfWord)
-{
-  SPITimeout = SPIT_FLAG_TIMEOUT;
-  while (__HAL_SPI_GET_FLAG(&SpiHandle, SPI_FLAG_TXE) == RESET)
-  {
-    if((SPITimeout--) == 0) return SPI_TIMEOUT_UserCallback(2);
-  }
-
-  WRITE_REG(SpiHandle.Instance->DR, HalfWord);
-  SPITimeout = SPIT_FLAG_TIMEOUT;
-
-  while (__HAL_SPI_GET_FLAG(&SpiHandle, SPI_FLAG_RXNE) == RESET)
-  {
-    if((SPITimeout--) == 0) return SPI_TIMEOUT_UserCallback(3);
   }
 
   return READ_REG(SpiHandle.Instance->DR);
@@ -321,20 +264,6 @@ void SPI_FLASH_WaitForWriteEnd(void)
 
   SPI_FLASH_CS_HIGH();
 }
-
-void SPI_Flash_PowerDown(void)   
-{ 
-  SPI_FLASH_CS_LOW();
-  SPI_FLASH_SendByte(W25X_PowerDown);
-  SPI_FLASH_CS_HIGH();
-}   
-
-void SPI_Flash_WAKEUP(void)   
-{
-  SPI_FLASH_CS_LOW();
-  SPI_FLASH_SendByte(W25X_ReleasePowerDown);
-  SPI_FLASH_CS_HIGH();
-}   
 
 static uint16_t SPI_TIMEOUT_UserCallback(uint8_t errorCode)
 {

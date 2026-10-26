@@ -35,6 +35,5 @@ extern uint32_t log_write_offset;   /* 下一条要写入的偏移（空白地�
 void    Log_Init(void);                                    /* 上电：写指针归零 */
 void    Log_Write(Log_Level level, const char *str);       /* 全工程统一日志入口 */
 uint8_t Log_ReadOne(uint32_t log_offset, Log_Obj *log_obj);/* 读单条，0=有效 */
-void    Log_EraseAll(void);
 
 #endif
