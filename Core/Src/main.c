@@ -31,6 +31,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include "FreeRTOS.h"
+#include "semphr.h"
 #include "lcd.h"
 #include "touch.h"
 #include "modbus.h"
@@ -78,7 +80,20 @@ void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN 0 */
 uint8_t esp_rx_dma_buf[256];
 
-/* 调试串口（UART5）：只打关键事件，不逐条刷发布 */
+#if DBG_PRINT_ENABLE
+/* UART5 调试口互斥锁：所有任务都会经 Log_Write → dbg_print 用这条串口，
+ * 不加锁时两个任务的输出按字节交错成乱行。在 MX_FREERTOS_Init 里创建；
+ * 创建前（内核未起的极早期打印）为 NULL，直接发送、不加锁。 */
+SemaphoreHandle_t dbg_uart_mutex = NULL;
+
+/* 调试串口（UART5）：只打关键事件，不逐条刷发布。
+ *
+ * 两处都是有限超时，原因：
+ * 1) 发送不再用 HAL_MAX_DELAY：一行最长 128B @115200 约 11ms，给 100ms 只兜
+ *    硬件挂死。本函数会被持 esp_uart_mutex 的路径（AT 心跳 / MQTT 发布里的
+ *    Log_Write）调到，无限阻塞等于放大临界区，和"缩短持锁时间"对着干。
+ * 2) 取锁给 50ms 短超时：拿不到宁可丢这一行日志——调试口不能反过来拖死
+ *    业务，丢一行 log 的代价远小于堵住持锁任务 50ms。 */
 void dbg_print(const char *fmt, ...) {
     char buf[128];
     va_list ap;
@@ -92,8 +107,13 @@ void dbg_print(const char *fmt, ...) {
      * 邻近内存当数据发出去（越界读）。必须自己截断。 */
     if (n > (int)sizeof(buf) - 1)
         n = (int)sizeof(buf) - 1;
-    HAL_UART_Transmit(&huart5, (uint8_t *)buf, (uint16_t)n, HAL_MAX_DELAY);
+    if (dbg_uart_mutex == NULL ||
+        xSemaphoreTake(dbg_uart_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        HAL_UART_Transmit(&huart5, (uint8_t *)buf, (uint16_t)n, 100);
+        if (dbg_uart_mutex) xSemaphoreGive(dbg_uart_mutex);
+    }
 }
+#endif /* DBG_PRINT_ENABLE */
 /* USER CODE END 0 */
 
 /**

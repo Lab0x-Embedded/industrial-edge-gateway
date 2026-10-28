@@ -182,7 +182,9 @@ int wifi_join(void)
      * - TIMEOUT：CWJAP 撞上模块自动重连存储 AP 的 busy 窗口被 "busy p..." 丢弃
      *   （该行不含 ERROR/FAIL 关键词，ESP_SendCmd 只能等满 15s 超时）。窗口有
      *   3~8s，而 RST 把每次尝试都钉在同一相位上，只发一次必死 —— 2s 间隔再试，
-     *   最多 4 次，把整个窗口吸收掉。 */
+     *   最多 4 次，把整个窗口吸收掉。
+     * 最坏耗时口径：15s + 3×(2s+15s) ≈ 66s —— 这是 esp_uart_mutex 单次持有的
+     * 真正上界（扫描的 12s 不是），锁只保证会话原子性、不承诺实时性。 */
     for (int attempt = 1; r == ESP_TIMEOUT && attempt < 4; attempt++) {
         snprintf(msg, sizeof msg, "wifi join timeout, retry #%d", attempt + 1);
         Log_Write(LOG_WARN, msg);

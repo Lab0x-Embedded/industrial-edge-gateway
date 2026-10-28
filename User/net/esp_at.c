@@ -6,8 +6,8 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-/* cloud.c 里定义的调试串口输出（UART5）；不 include cloud.h，只声明 */
-extern void dbg_print(const char *fmt, ...);
+/* dbg_print 的声明由 esp_uart.h → main.h 提供（开关关闭时是空宏，见 main.h）；
+ * 不要在这里再写 extern 函数声明，函数式宏会把 "dbg_print(" 展开导致编译错误 */
 
 // 引用阶段一创建的全局环形缓冲区
 extern uint8_t buffer[BUFFER_SIZE];

@@ -81,7 +81,21 @@ void Error_Handler(void);
 #define LED2_GPIO_Port      GPIOG
 
 /* USER CODE BEGIN Private defines */
+/* 调试打印总开关：0 = 编译期整体裁掉 —— dbg_print 变空宏，所有调用点、
+ * 格式串、UART5 发送与互斥锁全部不进固件，零开销；1 = 走 UART5（互斥锁
+ * + 有限超时，实现见 main.c）。改这里的默认值，或构建时传
+ * -DDBG_PRINT_ENABLE=0（CMakeLists.txt 会转发，见 target_compile_definitions）。
+ * 注意：开关关闭后不允许任何 .c 再自带 dbg_print 的函数声明 ——
+ * 函数式宏会把声明里的 "dbg_print(" 一起展开，直接编译错误。 */
+#ifndef DBG_PRINT_ENABLE
+#define DBG_PRINT_ENABLE 1
+#endif
+
+#if DBG_PRINT_ENABLE
 void dbg_print(const char *fmt, ...);
+#else
+#define dbg_print(...) do { } while (0)
+#endif
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

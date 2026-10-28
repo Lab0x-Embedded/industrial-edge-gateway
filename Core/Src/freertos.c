@@ -36,6 +36,9 @@ extern QueueHandle_t data_queue;
 extern QueueHandle_t lvgl_data_queue;
 extern SemaphoreHandle_t esp_uart_mutex;
 extern SemaphoreHandle_t flash_mutex;   /* flash.c 定义，保护 SPI Flash 跨任务访问 */
+#if DBG_PRINT_ENABLE
+extern SemaphoreHandle_t dbg_uart_mutex; /* main.c 定义，保护 UART5 调试口（dbg_print） */
+#endif
 #include "lvgl.h"
 /* USER CODE END Includes */
 
@@ -97,6 +100,9 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_MUTEX */
   esp_uart_mutex = xSemaphoreCreateMutex();
   flash_mutex = xSemaphoreCreateMutex();
+#if DBG_PRINT_ENABLE   /* 关日志时 dbg_print 是空宏，锁没人用，不创建 */
+  dbg_uart_mutex = xSemaphoreCreateMutex();   /* UART5 调试口：多任务 Log_Write 共用 */
+#endif
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */

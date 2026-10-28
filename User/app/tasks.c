@@ -212,6 +212,11 @@ void AT(void)
         if (wifi_rx_selfcheck())
             dbg_print("[NET] uart4 rx rearmed\r\n");
 
+        /* 持锁上界（诚实口径）：正常路径秒级——心跳 1s、扫描 12s、校时 10s；
+         * 最坏是断线重连：CWJAP 15s + 3×(2s+15s) ≈ 66s（见 wifi_conn.c join 重试），
+         * 加 CIPSTART 5s 破一分钟。锁在这里只保证 AT 会话的原子性、不承诺实时性：
+         * MQTT 发布最坏等一分钟才拿到锁，期间 data_queue 被 xQueueOverwrite 持续
+         * 覆盖，醒来发的仍是最新采样 —— 这个上界能被接受，靠的就是"最新值信箱"。 */
         xSemaphoreTake(esp_uart_mutex, portMAX_DELAY);	//阻塞获取互斥锁
 
         /* WiFi 设置页的点名扫描：在持锁的 AT 语境里做（UI 线程只置标志，不阻塞界面）。

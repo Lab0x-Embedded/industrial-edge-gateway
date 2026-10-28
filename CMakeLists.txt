@@ -62,6 +62,14 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     User/gui/porting
 )
 
+# ---- 调试打印总开关（main.h 有同名 #ifndef 默认 1）----
+# cmake -DDBG_PRINT_ENABLE=0 可整体裁掉 UART5 日志：dbg_print 变空宏，
+# 调用点、格式串、发送与互斥锁全部不进固件。
+if(NOT DEFINED DBG_PRINT_ENABLE)
+    set(DBG_PRINT_ENABLE 1)
+endif()
+message(STATUS "dbg_print 开关: DBG_PRINT_ENABLE=${DBG_PRINT_ENABLE}")
+
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
@@ -75,6 +83,7 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # 区，CubeMX 重新生成会整份覆盖；hal_conf 里用的是
     # `#if !defined(LSE_STARTUP_TIMEOUT)` 守卫，所以 -D 能生效且不被冲掉。
     LSE_STARTUP_TIMEOUT=500U
+    DBG_PRINT_ENABLE=${DBG_PRINT_ENABLE}
 )
 
 # ---- 云端凭据注入：本地 .env > cloud.h 占位默认 ----

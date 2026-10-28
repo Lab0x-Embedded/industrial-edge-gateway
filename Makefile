@@ -39,6 +39,13 @@ ELF        := $(BUILD_DIR)/$(PROJECT).elf
 HEX        := $(BUILD_DIR)/$(PROJECT).hex
 BIN        := $(BUILD_DIR)/$(PROJECT).bin
 
+# DBG: 调试打印总开关（1=开 0=关）。关掉时 dbg_print 变空宏，调用点、格式串、
+# UART5 发送与互斥锁全部不进固件（省 ~1.2KB FLASH），机制见 main.h。
+# 用法：make DBG=0 / make flash DBG=0 / make release DBG=0
+# 注意：不传 DBG 时永远按 1 重新配置 —— `make DBG=0` 之后的下一次裸 `make`
+# 会自动把日志开回来，这是有意的：开关状态跟构建走，不藏在缓存里。
+DBG ?= 1
+
 # 从机（独立 CMake 工程，preset 在 ModbusSlave/CMakePresets.json）
 SLAVE_DIR   := ModbusSlave
 SLAVE_ELF   := $(SLAVE_DIR)/build/$(BUILD_TYPE)/modbus_slave.elf
@@ -64,8 +71,8 @@ all: build
 
 # ---------- 编译：网关 ----------
 build:
-	@echo ">>> configure + build 网关（cmake --preset $(BUILD_TYPE)）"
-	@cmake --preset $(BUILD_TYPE)
+	@echo ">>> configure + build 网关（cmake --preset $(BUILD_TYPE)，DBG_PRINT_ENABLE=$(DBG)）"
+	@cmake --preset $(BUILD_TYPE) -DDBG_PRINT_ENABLE=$(DBG)
 	@cmake --build --preset $(BUILD_TYPE)
 
 release:
@@ -176,4 +183,5 @@ help:
 	@echo "  OPENOCD_IF=interface/stlink.cfg | interface/jlink.cfg"
 	@echo "  PYOCD_TARGET=stm32f407zg"
 	@echo "  BUILD_TYPE=Debug|Release（make slave/flash-slave 同样生效）"
+	@echo "  DBG=1|0        - 调试打印开关，0 = 整体裁掉 UART5 日志（make flash DBG=0 可直接烧无日志固件）"
 	@echo "  SERIAL_PORT=/dev/cu.usbserial-0001"
