@@ -129,6 +129,16 @@ ModDev_t dev_list[] = {
 uint8_t dev_cnt = sizeof(dev_list) / sizeof(ModDev_t);
 #define MAX_ERR_CNT 5   // 连续失败 5 次临时跳过该设备
 
+/* Modbus 轮询时序（优化：分级超时 + 死从机跳过，支持多挂从机）
+ * 原单一 800ms 绝对超时：死从机每台吃满 800ms，N 台就是 N×800ms，
+ * 多挂几台就超出 800ms 轮询周期、数据越采越旧。拆成分级超时后，
+ * 死从机单台只等 150ms，活从机不受影响。 */
+#define MB_FIRST_BYTE_TO    150u   /* 等首字节超时：从机正常 <50ms，死从机 150ms 即放弃 */
+#define MB_GAP_TO           50u    /* 帧间静默 3.5 字符 @9600≈4.6ms，留余量 */
+#define MB_ABS_TO           300u   /* 绝对兜底：从机发了半个帧卡住 */
+#define MB_DEV_GAP          10u    /* 从机间隔：30ms→10ms（上一应答末字节已出，3.5字符+余量够） */
+#define MB_REVIVE_ROUNDS    10u    /* 死从机每 10 轮复活探测一次，避免永远不恢复 */
+
 /* 按从机地址查设备：数据取用不依赖 dev_list 的下标顺序，
  * 增删/重排设备表不会错位；找不到返回 NULL。 */
 static ModDev_t *ModDev_Find(uint8_t addr)
@@ -179,11 +189,14 @@ uint8_t Modbus_Read_Dev(uint8_t addr, uint8_t func, uint16_t reg, uint16_t regcn
     /* 删除原 vTaskDelay(1); 发送完立即切换接收 */
     RS485_RX;
 
+    /* 分级超时接收（建议后续改为中断/DMA，当前使用 taskYIELD 降低丢包）
+     * 1) 等首字节 MB_FIRST_BYTE_TO：死从机单台只等 150ms（原 800ms）
+     * 2) 帧间静默 MB_GAP_TO：收到首字节后，3.5 字符无新字节即判帧结束
+     * 3) 绝对兜底 MB_ABS_TO：从机发了半个帧卡住，300ms 强制退出 */
     uint32_t start = HAL_GetTick();
     uint32_t upd = HAL_GetTick();
     count = 0;
 
-    /* 轮询接收（建议后续改为中断/DMA，当前使用 taskYIELD 降低丢包） */
     while (1)
     {
         if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE))
@@ -192,9 +205,10 @@ uint8_t Modbus_Read_Dev(uint8_t addr, uint8_t func, uint16_t reg, uint16_t regcn
             if (count < sizeof(rx)) rx[count++] = ch;
             upd = HAL_GetTick();
         }
-        if (count > 0 && (HAL_GetTick() - upd) > 50) break;  // 帧间隔 3.5 字符
-        if (HAL_GetTick() - start > 800) break;               // 绝对超时
-        taskYIELD();  // 替代 vTaskDelay(1)，让出 CPU 但不固定延时
+        if (count > 0 && (HAL_GetTick() - upd) > MB_GAP_TO) break;              /* 帧间隔 3.5 字符 */
+        if (count == 0 && (HAL_GetTick() - start) > MB_FIRST_BYTE_TO) break;    /* 等首字节超时：死从机 */
+        if (HAL_GetTick() - start > MB_ABS_TO) break;                           /* 绝对兜底 */
+        taskYIELD();  // 让出 CPU 但不固定延时
     }
 
     /* 长度安全检查：最小帧为 地址 + 功能码 + 字节数 +(此时数据位为0) + 2 字节 CRC */
@@ -221,13 +235,17 @@ uint8_t Modbus_Read_Dev(uint8_t addr, uint8_t func, uint16_t reg, uint16_t regcn
 void Modbus_Poll_AllDev(void)
 {
     uint16_t tmp_buf[8];
+    static uint16_t poll_round = 0;   /* 全局轮次计数：死从机复活探测 */
+    poll_round++;
     for (uint8_t i = 0; i < dev_cnt; i++)
     {
         ModDev_t *p = &dev_list[i];
         memset(tmp_buf, 0, sizeof(tmp_buf));
 
-        /* 连续错误超限，跳过本次轮询（原注释保留，可根据需求启用） */
-        // if (p->err_cnt >= MAX_ERR_CNT) continue;
+        /* 死从机跳过：连续失败达上限则本轮不发请求，省掉等首字节的时间。
+         * 每 MB_REVIVE_ROUNDS 轮强制探测一次，恢复后自动重新纳入正常轮询。 */
+        if (p->err_cnt >= MAX_ERR_CNT && (poll_round % MB_REVIVE_ROUNDS) != 0)
+            continue;
 
         if (Modbus_Read_Dev(p->dev_addr, p->func, p->reg_start, p->reg_num, tmp_buf) == 1)
         {
@@ -266,7 +284,7 @@ void Modbus_Poll_AllDev(void)
                 Log_Write(LOG_ERROR, log_buf);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(30)); // 单从机间隔防总线干扰（重点时间不能过大）
+        vTaskDelay(pdMS_TO_TICKS(MB_DEV_GAP)); // 从机间隔防总线干扰（30ms→10ms）
     }
 }
 
