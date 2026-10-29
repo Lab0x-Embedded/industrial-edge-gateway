@@ -66,6 +66,19 @@ uint8_t cloud_online_now(void)
 extern IWDG_HandleTypeDef hiwdg;
  volatile uint8_t g_mqtt_connected;
 
+/* 任务心跳：各任务定期更新，Dog_task 检查是否停滞。
+ * 32 位无符号减法自动处理 tick 回绕；Cortex-M4 32 位读写原子，无需锁。 */
+volatile TickType_t g_ui_alive;
+volatile TickType_t g_modbus_alive;
+volatile TickType_t g_mqtt_alive;
+volatile TickType_t g_at_alive;
+
+/* 心跳停滞阈值：超过此值 Dog_task 不喂狗 → IWDG 复位 */
+#define UI_ALIVE_TIMEOUT_MS     5000u
+#define MODBUS_ALIVE_TIMEOUT_MS 3000u
+#define MQTT_ALIVE_TIMEOUT_MS   10000u
+#define AT_ALIVE_TIMEOUT_MS     150000u  /* 覆盖 RE_MQTT_Init 最长阻塞 ~150s */
+
 // ==============================================
 // Modbus 采集
 // ==============================================
@@ -75,7 +88,8 @@ void Modbus(void)
     while(1)
     {
 			
-        Modbus_Poll_AllDev();					//读到的数据赋值给结构体数组
+		g_modbus_alive = xTaskGetTickCount();
+        Modbus_Poll_AllDev();				//读到的数据赋值给结构体数组
         
         Modbus_Upload_Json();					//将采集到的数据赋值给结构体 然后写入队列
 				
@@ -98,12 +112,19 @@ D0:PE3 D1:PE4 D2:PG9
 void MQTT(void)
 {
     vTaskDelay(5000);
+    g_mqtt_alive = xTaskGetTickCount();
     Data_t data_q;
     while (1)
     {
 				 
 			
-			xQueueReceive(data_queue, &data_q,portMAX_DELAY);
+			if (xQueueReceive(data_queue, &data_q, pdMS_TO_TICKS(5000)) != pdPASS)
+			{
+			    g_mqtt_alive = xTaskGetTickCount();
+			    vTaskDelay(pdMS_TO_TICKS(2000));
+			    continue;
+			}
+			g_mqtt_alive = xTaskGetTickCount();
 			
 
             if (g_mqtt_connected)			//在线
@@ -111,7 +132,13 @@ void MQTT(void)
                 char cached[512];
                 uint16_t len;
                 int count = 0;
-xSemaphoreTake(esp_uart_mutex, portMAX_DELAY);				//获取锁
+                if (xSemaphoreTake(esp_uart_mutex, pdMS_TO_TICKS(15000)) != pdPASS)
+                {
+                    g_mqtt_alive = xTaskGetTickCount();
+                    vTaskDelay(pdMS_TO_TICKS(2000));
+                    continue;
+                }
+                g_mqtt_alive = xTaskGetTickCount();
                 // 补传（读完就销毁，绝对不重复）
 							while (FlashCache_HasData() && count < 5)					//如果读指针落后写指针，说明有数据 返回1
 							{
@@ -190,6 +217,7 @@ void AT(void)
 	/* 开机首次连接也必须持锁：MQTT 任务这时可能已经在跑（例如上电后立刻要补传缓存），
 	 * 它会拿同一把锁去读写 UART4 —— 不持锁就是两边抢同一份 AT 应答，
 	 * 结果是"开机随机连不上，非要等下一轮 10s 重连才好"。 */
+	g_at_alive = xTaskGetTickCount();
 	xSemaphoreTake(esp_uart_mutex, portMAX_DELAY);
 	MQTT_Init();						//连接成功后 g_mqtt_connected为1 否则为0
 	xSemaphoreGive(esp_uart_mutex);
@@ -201,7 +229,10 @@ void AT(void)
         /* 分段等待：WiFi 设置页的重连请求 / 扫描请求 / 校时请求可即时打断 10s 心跳间隔 */
         for (int i = 0; i < 10 && !wifi_reconnect_request && !wifi_scan_request
                        && !wifi_timesync_request; i++)
+        {
+            g_at_alive = xTaskGetTickCount();
             vTaskDelay(1000);
+        }
         /* 【自愈】拿锁之前先确认 UART4 接收还挂着。
          * 这一步不碰串口、不需要 esp_uart_mutex，所以哪怕本任务马上就要在锁上
          * 等很久，自愈也已经生效了 —— 这正是原设计"只在 escape 失败时自检"
@@ -366,6 +397,7 @@ void UI(void)
 {
     Data_t disp_data;
 
+    g_ui_alive = xTaskGetTickCount();
     LCD_Init();
     TP_Init();
     TP_Do_Calibration();   /* 开机两点校准：按提示依次按住 左上/右下 十字中心 */
@@ -388,6 +420,7 @@ void UI(void)
 	while (1)				//任务函数 不会退出该函数 故局部变量不会被清空
     {
 		
+				g_ui_alive = xTaskGetTickCount();
 				// 触摸按下：重置空闲计时；黑屏中则点亮（唤醒的这次触摸不当作点击）
         if (HAL_GPIO_ReadPin(TP_PEN_GPIO_Port, TP_PEN_Pin) == GPIO_PIN_RESET)
         {
@@ -454,13 +487,22 @@ void UI(void)
 }
 
 
-/*看门狗任务 3秒喂一次狗 溢出时间是20秒*/
+/*看门狗任务 2.5秒检查一次心跳 全部正常才喂狗 溢出时间是10秒*/
 void Dog_task()
 {
 	
 	while(1)
 	{
-		HAL_IWDG_Refresh(&hiwdg);			//3秒喂一次狗 溢出时间是20秒     俗称喂狗：将倒计时计数器重置为初始值，阻止看门狗复位。
-		vTaskDelay(3000);
+		TickType_t now = xTaskGetTickCount();
+		/* 心跳检查：所有任务心跳都停滞则停止喂狗 → IWDG 复位
+		 * 启动时心跳变量为 0，now-0=now<阈值 → 全部通过 → 正常喂狗 */
+		if ((now - g_ui_alive)      < pdMS_TO_TICKS(UI_ALIVE_TIMEOUT_MS)      &&
+		    (now - g_modbus_alive)  < pdMS_TO_TICKS(MODBUS_ALIVE_TIMEOUT_MS) &&
+		    (now - g_mqtt_alive)    < pdMS_TO_TICKS(MQTT_ALIVE_TIMEOUT_MS)   &&
+		    (now - g_at_alive)      < pdMS_TO_TICKS(AT_ALIVE_TIMEOUT_MS))
+		{
+			HAL_IWDG_Refresh(&hiwdg);	//全部任务心跳正常 → 喂狗
+		}
+		vTaskDelay(pdMS_TO_TICKS(2500));
 	}
 }

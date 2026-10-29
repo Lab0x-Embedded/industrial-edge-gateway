@@ -232,6 +232,8 @@ uint8_t Modbus_Read_Dev(uint8_t addr, uint8_t func, uint16_t reg, uint16_t regcn
     return 0;
 }
 
+extern volatile TickType_t g_modbus_alive;   /* tasks.c 定义，从机轮询循环内刷新 */
+
 void Modbus_Poll_AllDev(void)
 {
     uint16_t tmp_buf[8];
@@ -284,6 +286,7 @@ void Modbus_Poll_AllDev(void)
                 Log_Write(LOG_ERROR, log_buf);
             }
         }
+        g_modbus_alive = xTaskGetTickCount();
         vTaskDelay(pdMS_TO_TICKS(MB_DEV_GAP)); // 从机间隔防总线干扰（30ms→10ms）
     }
 }

@@ -9,6 +9,8 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+extern volatile TickType_t g_ui_alive;   /* tasks.c 定义，校准等待期间由本文件刷新 */
+
 #define TP_CLK(x)  HAL_GPIO_WritePin(TP_CLK_GPIO_Port,  TP_CLK_Pin,  (GPIO_PinState)(x))
 #define TP_DIN(x)  HAL_GPIO_WritePin(TP_MOSI_GPIO_Port, TP_MOSI_Pin, (GPIO_PinState)(x))
 #define TP_CS(x)   HAL_GPIO_WritePin(TP_CS_GPIO_Port,   TP_CS_Pin,   (GPIO_PinState)(x))
@@ -127,6 +129,7 @@ static int TP_WaitRelease(TickType_t timeout_ticks)
     while (TP_PEN() == GPIO_PIN_RESET)
     {
         if ((int32_t)(xTaskGetTickCount() - deadline) >= 0) return -1;
+        g_ui_alive = xTaskGetTickCount();
         vTaskDelay(10);
     }
     return 0;
@@ -163,6 +166,7 @@ static int TP_WaitSample(uint16_t *sy, uint16_t *sx, TickType_t timeout_ticks)
             *sx = 0; *sy = 0;
             return -1;
         }
+        g_ui_alive = xTaskGetTickCount();
         vTaskDelay(10);
     }
 
@@ -173,8 +177,10 @@ static int TP_WaitSample(uint16_t *sy, uint16_t *sx, TickType_t timeout_ticks)
             *sx = 0; *sy = 0;
             return -1;
         }
+        g_ui_alive = xTaskGetTickCount();
         vTaskDelay(10);
     }
+    g_ui_alive = xTaskGetTickCount();
     vTaskDelay(20);                            /* 膜形变稳定 */
 
     while (n < 16 && TP_PEN() == GPIO_PIN_RESET)
@@ -182,6 +188,7 @@ static int TP_WaitSample(uint16_t *sy, uint16_t *sx, TickType_t timeout_ticks)
         uint16_t rx = TP_ReadX();
         uint16_t ry = TP_ReadY();
         if (rx > 50 && ry > 50) { ax += rx; ay += ry; n++; }
+        g_ui_alive = xTaskGetTickCount();
         vTaskDelay(5);
     }
 
@@ -287,6 +294,7 @@ void TP_Do_Calibration(void)
         for (uint32_t i = 0; i < 50; i++)      /* 采样 500ms，滤掉上电抖动 */
         {
             if (TP_PEN() == GPIO_PIN_RESET) hold++;
+            g_ui_alive = xTaskGetTickCount();
             vTaskDelay(10);
         }
         if (hold < 30)                          /* 没按住 → 尝试装载旧校准 */

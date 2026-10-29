@@ -151,7 +151,7 @@ void StartDefaultTask(void *argument)
         xTaskCreate(Modbus,    "SensorTask",  512, NULL, osPriorityNormal + 1,      NULL);
         xTaskCreate(AT,        "NetworkTask", 512, NULL, osPriorityNormal,          NULL);
         xTaskCreate(MQTT,      "MQTTTask",    1024, NULL, osPriorityNormal,          NULL);
-        xTaskCreate(Dog_task,  "Dog_task",    512, NULL, osPriorityAboveNormal + 2, NULL);
+        xTaskCreate(Dog_task,  "Dog_task",    256, NULL, osPriorityAboveNormal + 2, NULL);
 
         power_tick = xTaskGetTickCount();
         idle_tick  = xTaskGetTickCount();
